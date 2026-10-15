@@ -8,6 +8,7 @@ export interface RunRequest {
   threadId?: string | null;
   prompt: string;
   instructions: string;
+  images?: { dataUrl: string; description: string }[];
   tools: ToolDefinition[];
   outputSchema?: Record<string, unknown>;
   webSearch?: boolean;

@@ -26,6 +26,7 @@ import { runBackfill } from "./backfill.ts";
 import { toSourceInput } from "./normalize.ts";
 import { resolveDiscordMember, recentMemberMessages } from "./members.ts";
 import { audienceCompatible } from "./access.ts";
+import { loadMessageImages, messageImages } from "./images.ts";
 import type { Task } from "../tasks/store.ts";
 import { chunks, noMentions } from "../util.ts";
 const log = logger("discord");
@@ -403,6 +404,7 @@ export class DiscordService {
     return {
       originMessageId: message.id,
       originChannelId: message.channelId,
+      images: messageImages(message),
       requester: {
         id: message.author.id,
         username: message.author.username,
@@ -497,11 +499,14 @@ export class DiscordService {
       ...this.messageIdentity(message),
       reply: reply
         ? {
+            id: reply.id,
+            channelId: reply.channelId,
             authorId: reply.author.id,
             author: reply.author.username,
             bot: reply.author.bot,
             text: reply.content,
             url: reply.url,
+            images: messageImages(reply),
           }
         : null,
       nearby: [...nearby.values()].reverse().map((m) => ({
@@ -511,6 +516,79 @@ export class DiscordService {
         text: m.content,
         url: m.url,
       })),
+    };
+  }
+  async imageContext(task: Task, scope: AccessScope, signal: AbortSignal) {
+    const empty = {
+      images: [],
+      notes: [] as string[],
+      sourceChannels: [] as string[],
+    };
+    if (!task.origin_message_id) return empty;
+    if (!scope.channelIds.includes(task.origin_channel_id))
+      throw new Error("Image source channel is outside the authorized scope");
+    const channel = await this.client.channels.fetch(task.origin_channel_id);
+    if (!channel?.isTextBased() || !("messages" in channel)) return empty;
+    let origin: Message;
+    try {
+      origin = await channel.messages.fetch({
+        message: task.origin_message_id,
+        force: true,
+        cache: false,
+      });
+    } catch (error) {
+      // Slash-command interaction IDs are not Discord message IDs.
+      if (
+        typeof error === "object" &&
+        error &&
+        "code" in error &&
+        Number(error.code) === 10008
+      )
+        return empty;
+      throw error;
+    }
+    if (origin.guildId !== this.opts.cfg.discordGuildId)
+      throw new Error("Image source belongs to another server");
+    const messages = [origin];
+    const notes: string[] = [];
+    const reference = origin.reference;
+    if (reference?.messageId) {
+      const referenceChannel = reference.channelId ?? origin.channelId;
+      if (!scope.channelIds.includes(referenceChannel)) {
+        notes.push(
+          "The replied-to message is outside the authorized source scope; its images were not loaded.",
+        );
+      } else {
+        try {
+          const target = await this.client.channels.fetch(referenceChannel);
+          if (!target?.isTextBased() || !("messages" in target))
+            throw new Error("Reply channel unavailable");
+          const reply = await target.messages.fetch({
+            message: reference.messageId,
+            force: true,
+            cache: false,
+          });
+          if (reply.guildId === this.opts.cfg.discordGuildId)
+            messages.push(reply);
+        } catch {
+          notes.push(
+            "The replied-to message could not be refreshed; its images were not loaded.",
+          );
+        }
+      }
+    }
+    signal.throwIfAborted();
+    const result = await loadMessageImages(messages, signal);
+    return {
+      ...result,
+      notes: [...notes, ...result.notes],
+      sourceChannels: [
+        ...new Set(
+          messages
+            .filter((m) => messageImages(m).length)
+            .map((m) => m.channelId),
+        ),
+      ],
     };
   }
   private researchMarker(taskId: number): string {

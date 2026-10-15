@@ -241,7 +241,13 @@ export class CodexRunner implements ResearchRunner {
       void completion.catch(() => {});
       const started = await client.request("turn/start", {
         threadId,
-        input: [{ type: "text", text: request.prompt }],
+        input: [
+          { type: "text", text: request.prompt },
+          ...(request.images ?? []).flatMap((image) => [
+            { type: "text", text: image.description },
+            { type: "image", url: image.dataUrl },
+          ]),
+        ],
         effort: this.cfg.codexEffort,
         approvalPolicy: "never",
         sandboxPolicy: { type: "readOnly", networkAccess: false },

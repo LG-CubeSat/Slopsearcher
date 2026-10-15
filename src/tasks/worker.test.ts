@@ -27,6 +27,11 @@ beforeEach(() => {
   db = openAndMigrate(":memory:");
   tasks = new TaskStore(db);
   gateway = {
+    imageContext: vi.fn(async () => ({
+      images: [],
+      notes: [],
+      sourceChannels: [],
+    })),
     scope: vi.fn(async () => ({
       channelIds: ["origin", "research"],
       destinationId: "research",
