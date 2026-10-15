@@ -170,7 +170,11 @@ export class DiscordService {
     if (
       !edited &&
       this.client.user &&
-      message.mentions.users.has(this.client.user.id)
+      (message.mentions.users.has(this.client.user.id) ||
+        Boolean(
+          message.guild?.members.me?.roles.botRole &&
+          message.mentions.roles.has(message.guild.members.me.roles.botRole.id),
+        ))
     )
       await onMention?.(message);
   }

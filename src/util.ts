@@ -20,3 +20,24 @@ export function parseJson(text: string): unknown {
     text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, ""),
   );
 }
+
+/** Bound optional context retrieval without delaying the question indefinitely. */
+export async function withTimeout<T>(
+  work: Promise<T>,
+  milliseconds: number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Context retrieval timed out")),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

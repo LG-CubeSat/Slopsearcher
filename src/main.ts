@@ -147,6 +147,7 @@ async function main(): Promise<void> {
       true,
     );
     scheduler.every("Task dispatcher", 2000, () => worker.tick(), true);
+    scheduler.every("Question progress", 15000, () => worker.progress(), true);
     scheduler.every("Report delivery", 15000, () => worker.deliver(), true);
     scheduler.every(
       "Memory extraction",

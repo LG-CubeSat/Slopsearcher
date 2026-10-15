@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { toolActivity } from "../tasks/progress.ts";
 import {
   runnerConfig,
   runnerConfigArgs,
@@ -207,8 +208,14 @@ export class CodexRunner implements ResearchRunner {
             request.onProgress?.(
               p.item.type === "webSearch"
                 ? "Checking web sources…"
-                : `Searching project information (${p.item.tool})…`,
+                : (toolActivity.get(p.item.tool) ?? "Reading project sources…"),
             );
+          if (
+            m.method === "item/started" &&
+            p.item?.type === "agentMessage" &&
+            p.item.phase === "final_answer"
+          )
+            request.onProgress?.("Writing the answer…");
           if (m.method !== "turn/completed") return;
           if (p.turn.status !== "completed") {
             reject(

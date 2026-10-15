@@ -6,7 +6,8 @@ import type { MemoryStore } from "../memory/store.ts";
 import type { DiscordService } from "../discord/client.ts";
 import type { DriveService } from "../drive/service.ts";
 import { projectTools } from "../research/tools.ts";
-import { TaskStore, type Task } from "./store.ts";
+import { TaskStore, type Task, type TaskStatus } from "./store.ts";
+import { questionActivities, questionProgress } from "./progress.ts";
 import { logger } from "../log.ts";
 import { errorMessage, parseJson } from "../util.ts";
 const log = logger("tasks");
@@ -25,6 +26,8 @@ export class TaskWorker {
   >();
   #stopping = false;
   #delivering = false;
+  #questionActivity = new Map<number, string>();
+  #questionUpdates = new Map<number, Promise<void>>();
   constructor(
     private cfg: Config,
     private store: TaskStore,
@@ -49,15 +52,54 @@ export class TaskWorker {
       this.#active.set(task.id, { controller, promise });
     }
   }
+  private async updateQuestion(
+    task: Task,
+    allowed: TaskStatus[] = ["pending", "running"],
+  ): Promise<void> {
+    if (task.kind !== "question" || !task.output_message_id || this.#stopping)
+      return;
+    const previous = this.#questionUpdates.get(task.id) ?? Promise.resolve();
+    const update = previous
+      .then(async () => {
+        const current = this.store.get(task.id);
+        if (this.#stopping || !current || !allowed.includes(current.status))
+          return;
+        await this.discord.notify(
+          current,
+          questionProgress(current, this.#questionActivity.get(task.id)),
+        );
+      })
+      .catch((error) =>
+        log.warn(`Could not update question ${task.id}`, error),
+      );
+    this.#questionUpdates.set(task.id, update);
+    await update;
+    if (this.#questionUpdates.get(task.id) === update)
+      this.#questionUpdates.delete(task.id);
+  }
+  async progress(): Promise<void> {
+    if (this.#stopping) return;
+    const questions = this.store.db
+      .prepare<[], Task>(
+        "SELECT * FROM tasks WHERE kind='question' AND status IN ('pending','running') AND output_message_id IS NOT NULL ORDER BY id",
+      )
+      .all();
+    await Promise.allSettled(
+      questions.map((task) => this.updateQuestion(task)),
+    );
+  }
   cancel(id: number): void {
     this.store.update(id, { status: "cancelled", delivery_pending: 0 });
     this.store.event(id, "cancelled");
     this.#active.get(id)?.controller.abort();
+    const task = this.store.get(id);
+    if (task) void this.updateQuestion(task, ["cancelled"]);
   }
   async stop(): Promise<void> {
     this.#stopping = true;
     for (const job of this.#active.values()) job.controller.abort();
     await Promise.allSettled([...this.#active.values()].map((j) => j.promise));
+    await Promise.allSettled([...this.#questionUpdates.values()]);
   }
   private async execute(task: Task, signal: AbortSignal): Promise<void> {
     let session: ReturnType<typeof projectTools> | undefined;
@@ -65,6 +107,8 @@ export class TaskWorker {
       sourceChannels?: string[];
     };
     try {
+      this.#questionActivity.set(task.id, "Getting ready…");
+      await this.updateQuestion(task);
       if (task.error?.startsWith("Project configuration changed"))
         throw new Error(
           "Start a new task for the current project configuration",
@@ -79,7 +123,7 @@ export class TaskWorker {
           const text = `Task #${task.id} is waiting for the operator to finish Codex sign-in. I’ll pick it up automatically afterward.`;
           const notice =
             task.kind === "question"
-              ? this.discord.notify(task, text)
+              ? this.updateQuestion(this.store.get(task.id)!)
               : this.discord.send(
                   task.discord_channel_id ?? task.origin_channel_id,
                   text,
@@ -90,6 +134,7 @@ export class TaskWorker {
         }
         return;
       }
+      this.store.update(task.id, { error: null });
       if (task.kind === "research" && !task.discord_channel_id) {
         await this.discord.scope(task.requested_by, task.origin_channel_id);
         const channelId = await this.discord.createResearchChannel(task);
@@ -102,6 +147,10 @@ export class TaskWorker {
           )
           .catch((e) => log.warn("Could not post research channel link", e));
       }
+      this.#questionActivity.set(
+        task.id,
+        "Checking access to project sources…",
+      );
       const scope = await this.discord.scope(
         task.requested_by,
         task.discord_channel_id ?? task.origin_channel_id,
@@ -126,6 +175,7 @@ export class TaskWorker {
           );
         session.usedChannels.add(channel);
       }
+      this.#questionActivity.set(task.id, "Working on your answer…");
       let lastProgress = 0;
       const finalTurn = task.turn_count + 1 >= this.cfg.researchMaxTurns;
       const result = await this.runner.run({
@@ -151,6 +201,8 @@ export class TaskWorker {
         onThread: (threadId) =>
           this.store.update(task.id, { runner_thread_id: threadId }),
         onProgress: (text) => {
+          if (task.kind === "question" && questionActivities.has(text))
+            this.#questionActivity.set(task.id, text);
           if (
             Date.now() - lastProgress < 45000 ||
             this.#stopping ||
@@ -185,12 +237,13 @@ export class TaskWorker {
           summary: output.summary,
           sourceChannels: [...session.usedChannels],
         }),
-        next_run_at: Date.now() + 5000,
+        next_run_at: task.kind === "question" ? 0 : Date.now() + 5000,
         delivery_pending: done ? 1 : 0,
       });
       this.store.event(task.id, done ? "completed" : "checkpoint", {
         summary: output.summary,
       });
+      if (done && task.kind === "question") await this.deliver();
       if (!done && task.discord_channel_id)
         await this.discord
           .send(
@@ -210,7 +263,10 @@ export class TaskWorker {
         status: attempts >= 3 ? "failed" : "pending",
         attempts,
         error: errorMessage(e),
-        next_run_at: Date.now() + 15000 * 2 ** (attempts - 1),
+        next_run_at:
+          attempts >= 3 && task.kind === "question"
+            ? 0
+            : Date.now() + 15000 * 2 ** (attempts - 1),
         delivery_pending: attempts >= 3 ? 1 : 0,
         ...(session
           ? {
@@ -224,6 +280,10 @@ export class TaskWorker {
         message: errorMessage(e),
         attempts,
       });
+      if (attempts >= 3 && task.kind === "question") await this.deliver();
+      else await this.updateQuestion(this.store.get(task.id)!);
+    } finally {
+      this.#questionActivity.delete(task.id);
     }
   }
   async deliver(): Promise<void> {
@@ -273,6 +333,8 @@ export class TaskWorker {
               );
             }
           }
+          // Drain any in-flight progress edit before replacing it with the answer.
+          await this.#questionUpdates.get(task.id);
           const messageId = await this.discord.deliver(task);
           const needsUpload = Boolean(
             this.drive &&
@@ -289,6 +351,10 @@ export class TaskWorker {
         } catch (e) {
           this.store.update(task.id, { next_run_at: Date.now() + 60000 });
           log.warn(`Delivery for task ${task.id} deferred`, e);
+          await this.updateQuestion(this.store.get(task.id)!, [
+            "completed",
+            "failed",
+          ]);
         }
       }
     } finally {

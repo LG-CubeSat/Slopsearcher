@@ -11,7 +11,9 @@ import type { TaskStore } from "../tasks/store.ts";
 import type { TaskWorker } from "../tasks/worker.ts";
 import type { SourceIndex } from "../index/index.ts";
 import type { DiscordService } from "./client.ts";
-import { noMentions } from "../util.ts";
+import { noMentions, withTimeout } from "../util.ts";
+import { logger } from "../log.ts";
+const log = logger("commands");
 export const command = new SlashCommandBuilder()
   .setName("slop")
   .setDescription("Ask questions and investigate the CubeSat project")
@@ -140,8 +142,10 @@ export class Commands {
     );
   }
   async mention(message: Message): Promise<void> {
+    const botRole = message.guild?.members.me?.roles.botRole?.id;
     const question = message.content
       .replace(new RegExp(`<@!?${this.discord.client.user!.id}>`, "g"), "")
+      .replace(botRole ? new RegExp(`<@&${botRole}>`, "g") : /$^/, "")
       .trim();
     if (!question) {
       await message.reply({ content: help, allowedMentions: noMentions });
@@ -160,13 +164,22 @@ export class Commands {
     try {
       if (question.length > 4000)
         throw new Error("Please keep the question under 4,000 characters.");
-      const context = await this.discord.context(message);
       if (kind === "question")
         placeholder = await message.reply({
           content:
-            "Your question is queued. I’ll update this message with the answer.",
+            "Question received — getting ready… I’ll keep this message updated.",
           allowedMentions: noMentions,
         });
+      const context = await withTimeout(
+        this.discord.context(message),
+        8000,
+      ).catch((error) => {
+        log.warn(
+          "Could not load nearby discussion; continuing with the question",
+          error,
+        );
+        return { unavailable: true };
+      });
       const task = this.store.create(
         {
           kind,
@@ -338,7 +351,7 @@ export class Commands {
       const placeholder =
         kind === "question"
           ? await reply(
-              "Your question is queued. I’ll update this message with the answer.",
+              "Question received — getting ready… I’ll keep this message updated.",
             )
           : null;
       const task = this.store.create(
