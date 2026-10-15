@@ -11,6 +11,7 @@ import {
   PermissionFlagsBits,
   PermissionsBitField,
   type ChatInputCommandInteraction,
+  type ButtonInteraction,
   type GuildBasedChannel,
   type Message,
   type TextChannel,
@@ -41,6 +42,8 @@ export interface DiscordServiceOptions {
   queue: WorkQueue;
   onMention?: (message: Message) => Promise<void>;
   onInteraction?: (interaction: ChatInputCommandInteraction) => Promise<void>;
+  onButton?: (interaction: ButtonInteraction) => Promise<void>;
+  onResearchChannelDeleted?: (channelId: string) => Promise<void>;
 }
 export class DiscordService {
   readonly client: Client;
@@ -84,6 +87,21 @@ export class DiscordService {
     });
     this.client.on(Events.ChannelDelete, (c) => {
       if (!("guild" in c) || c.guild.id !== cfg.discordGuildId) return;
+      if (
+        this.opts.db
+          .prepare(
+            "SELECT id FROM tasks WHERE kind='research' AND discord_channel_id=? AND project_key=? LIMIT 1",
+          )
+          .get(c.id, projectKey(cfg))
+      )
+        void this.opts
+          .onResearchChannelDeleted?.(c.id)
+          .catch((error) =>
+            log.warn(
+              "Could not stop tasks for a deleted research channel",
+              error,
+            ),
+          );
       for (const row of this.opts.db
         .prepare<[string], { external_id: string }>(
           "SELECT external_id FROM sources WHERE channel_id=? AND deleted_at IS NULL",
@@ -92,6 +110,25 @@ export class DiscordService {
         index.retire("discord", row.external_id);
     });
     this.client.on(Events.InteractionCreate, (interaction) => {
+      if (
+        interaction.isButton() &&
+        interaction.guildId === cfg.discordGuildId &&
+        interaction.customId.startsWith("slop-delete:")
+      ) {
+        void this.opts.onButton?.(interaction).catch(async (error) => {
+          log.error("Research deletion confirmation failed", error);
+          const content =
+            "Could not delete the research channel. Ask the bot operator to check the logs.";
+          try {
+            if (interaction.deferred || interaction.replied)
+              await interaction.editReply({ content, components: [] });
+            else await interaction.reply({ content, flags: 64 });
+          } catch (replyError) {
+            log.warn("Could not report deletion error", replyError);
+          }
+        });
+        return;
+      }
       if (
         !interaction.isChatInputCommand() ||
         interaction.guildId !== cfg.discordGuildId
@@ -476,6 +513,134 @@ export class DiscordService {
       })),
     };
   }
+  private researchMarker(taskId: number): string {
+    return `slopsearcher:${this.instanceId}:task:${taskId}`;
+  }
+  private markerMatches(topic: string | null, taskId: number): boolean {
+    const marker = this.researchMarker(taskId);
+    return topic === marker || Boolean(topic?.startsWith(`${marker} | `));
+  }
+  private async researchCategory() {
+    const guild = await this.client.guilds.fetch(this.opts.cfg.discordGuildId);
+    await guild.channels.fetch();
+    const key = `research-category:${guild.id}`;
+    const saved = this.opts.db
+      .prepare<[string], { value: string }>(
+        "SELECT value FROM service_state WHERE key=?",
+      )
+      .get(key)?.value;
+    let category =
+      guild.channels.cache.find(
+        (c) =>
+          c.id === saved &&
+          c.type === ChannelType.GuildCategory &&
+          c.name === this.opts.cfg.discordSlopsearchesCategory,
+      ) ??
+      guild.channels.cache.find(
+        (c) =>
+          c.type === ChannelType.GuildCategory &&
+          c.name === this.opts.cfg.discordSlopsearchesCategory,
+      );
+    if (!category)
+      category = await guild.channels.create({
+        name: this.opts.cfg.discordSlopsearchesCategory,
+        type: ChannelType.GuildCategory,
+      });
+    this.opts.db
+      .prepare(
+        "INSERT INTO service_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      )
+      .run(key, category.id);
+    return category;
+  }
+  async organizeResearchChannels(): Promise<void> {
+    const category = await this.researchCategory();
+    const guild = await this.client.guilds.fetch(this.opts.cfg.discordGuildId);
+    const tasks = this.opts.db
+      .prepare<[string], Task>(
+        "SELECT * FROM tasks WHERE kind='research' AND discord_channel_id IS NOT NULL AND channel_closed_at IS NULL AND project_key=?",
+      )
+      .all(projectKey(this.opts.cfg));
+    for (const task of tasks) {
+      const channel = guild.channels.cache.get(task.discord_channel_id!);
+      if (
+        channel?.type !== ChannelType.GuildText ||
+        !this.markerMatches(channel.topic, task.id)
+      )
+        continue;
+      if (channel.parentId !== category.id)
+        await channel.setParent(category.id, {
+          lockPermissions: false,
+          reason: "Organize Slopsearcher long-running research",
+        });
+    }
+  }
+  async researchChannelForDeletion(channelId: string, userId: string) {
+    const task = this.opts.db
+      .prepare<[string, string], Task>(
+        "SELECT * FROM tasks WHERE kind='research' AND discord_channel_id=? AND project_key=? LIMIT 1",
+      )
+      .get(channelId, projectKey(this.opts.cfg));
+    if (!task)
+      throw new Error(
+        `I can only delete research channels I created under ${this.opts.cfg.discordSlopsearchesCategory}.`,
+      );
+    const guild = await this.client.guilds.fetch(this.opts.cfg.discordGuildId);
+    const channel = await guild.channels.fetch(channelId, { force: true });
+    const categoryId = this.opts.db
+      .prepare<[string], { value: string }>(
+        "SELECT value FROM service_state WHERE key=?",
+      )
+      .get(`research-category:${guild.id}`)?.value;
+    if (
+      channel?.type !== ChannelType.GuildText ||
+      channel.guildId !== guild.id ||
+      !this.markerMatches(channel.topic, task.id) ||
+      !categoryId ||
+      channel.parentId !== categoryId
+    )
+      throw new Error(
+        "This channel is not a verified Slopsearcher long-running research channel.",
+      );
+    const category = await guild.channels.fetch(categoryId, { force: true });
+    if (
+      category?.type !== ChannelType.GuildCategory ||
+      category.name !== this.opts.cfg.discordSlopsearchesCategory
+    )
+      throw new Error(
+        "The research category has changed. Ask the bot operator to check it.",
+      );
+    const member = await guild.members.fetch({ user: userId, force: true });
+    if (!channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel))
+      throw new Error("You cannot access this research channel.");
+    if (
+      task.requested_by !== userId &&
+      !member.permissions.has(PermissionFlagsBits.ManageGuild)
+    )
+      throw new Error(
+        "Only the research creator or a server manager can delete this channel.",
+      );
+    return { task, channel };
+  }
+  async deleteResearchChannel(
+    channelId: string,
+    userId: string,
+    taskId: number,
+  ): Promise<void> {
+    // Repeat all ownership and authorization checks immediately before deletion.
+    const current = await this.researchChannelForDeletion(channelId, userId);
+    if (current.task.id !== taskId || !current.task.channel_closed_at)
+      throw new Error("Research deletion has not been prepared");
+    await current.channel.delete(
+      `Research #${taskId} deletion confirmed by ${userId}`,
+    );
+    for (const source of this.opts.db
+      .prepare<[string], { external_id: string }>(
+        "SELECT external_id FROM sources WHERE kind='discord' AND channel_id=? AND deleted_at IS NULL",
+      )
+      .all(channelId))
+      this.opts.index.retire("discord", source.external_id);
+  }
   createResearchChannel(task: Task): Promise<string> {
     const result = this.#channelCreation.then(() =>
       this.performCreateResearchChannel(task),
@@ -487,25 +652,24 @@ export class DiscordService {
     return result;
   }
   private async performCreateResearchChannel(task: Task): Promise<string> {
+    if (task.channel_closed_at)
+      throw new Error("This research channel was closed");
     const guild = await this.client.guilds.fetch(this.opts.cfg.discordGuildId);
     const origin = await guild.channels.fetch(task.origin_channel_id);
     if (!origin) throw new Error("Origin channel no longer exists");
-    let category = guild.channels.cache.find(
-      (c) =>
-        c.type === ChannelType.GuildCategory &&
-        c.name === this.opts.cfg.discordSlopsearchesCategory,
-    );
-    if (!category)
-      category = await guild.channels.create({
-        name: this.opts.cfg.discordSlopsearchesCategory,
-        type: ChannelType.GuildCategory,
-      });
+    const category = await this.researchCategory();
     // Recover a channel created before an interrupted DB write.
-    const marker = `slopsearcher:${this.instanceId}:task:${task.id}`;
+    const marker = this.researchMarker(task.id);
     const existing = guild.channels.cache.find(
-      (c) => c.type === ChannelType.GuildText && c.topic?.startsWith(marker),
+      (c): c is TextChannel =>
+        c.type === ChannelType.GuildText &&
+        this.markerMatches(c.topic, task.id),
     );
-    if (existing) return existing.id;
+    if (existing) {
+      if (existing.parentId !== category.id)
+        await existing.setParent(category.id, { lockPermissions: false });
+      return existing.id;
+    }
     const overwrites =
       !origin.isThread() && "permissionOverwrites" in origin
         ? origin.permissionOverwrites.cache.map((o) => ({
@@ -555,7 +719,8 @@ export class DiscordService {
       PermissionFlagsBits.ViewChannel |
       PermissionFlagsBits.ReadMessageHistory |
       PermissionFlagsBits.SendMessages |
-      PermissionFlagsBits.AttachFiles;
+      PermissionFlagsBits.AttachFiles |
+      PermissionFlagsBits.ManageChannels;
     const botOverwrite = overwrites.find((o) => o.id === this.client.user!.id);
     if (botOverwrite) {
       botOverwrite.allow |= botPermissions;
@@ -582,7 +747,7 @@ export class DiscordService {
     });
     await this.send(
       channel.id,
-      `Research #${task.id}\n${task.question}\n\nI’ll post progress and the finished report here. Use /slop cancel to stop this task.`,
+      `Research #${task.id}\n${task.question}\n\nI’ll post progress and the finished report here. Use /slop cancel to stop this task. To delete this research channel, use /slop delete or mention me with “delete this channel”.`,
     );
     return channel.id;
   }

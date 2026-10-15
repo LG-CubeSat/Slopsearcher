@@ -1,4 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  type ButtonInteraction,
   PermissionFlagsBits,
   Routes,
   SlashCommandBuilder,
@@ -87,6 +92,13 @@ export const command = new SlashCommandBuilder()
   )
   .addSubcommand((c) =>
     c
+      .setName("delete")
+      .setDescription(
+        "Delete this bot-created research channel after confirmation",
+      ),
+  )
+  .addSubcommand((c) =>
+    c
       .setName("sync")
       .setDescription("Refresh project sources now (server managers)"),
   )
@@ -94,13 +106,22 @@ export const command = new SlashCommandBuilder()
     c.setName("help").setDescription("Show what Slopsearcher can do"),
   );
 export const help =
-  "Mention me or use /slop ask to ask about the project. Reply to a message and mention me to include that conversation. Ask me to make a question long-running, or use /slop research, to start a dedicated investigation.\n\n/slop search finds original sources. /slop status shows your tasks. /slop cancel stops a task, and /slop retry retries a failed or cancelled one. Research reports include source links and are attached in the task’s channel.";
+  "Mention me or use /slop ask to ask about the project. Reply to a message and mention me to include that conversation. Ask me to make a question long-running, or use /slop research, to start a dedicated investigation.\n\n/slop search finds original sources. /slop status shows your tasks. /slop cancel stops a task, and /slop retry retries a failed or cancelled one. Research reports include source links and are attached in the task’s channel. Long-running channels live under Slopsearcher Long-Running. Inside one, use /slop delete or mention me with “delete this channel”; the creator or a server manager must confirm the deletion.";
 export function isResearchRequest(text: string): boolean {
   return /\blong[\s-]*running\b|\b(?:ongoing|deep)\s+(?:research|investigation)\b|\bstart\s+(?:a\s+)?(?:research|investigation)\b|\bresearch\s+(?:this|that)\b/i.test(
     text,
   );
 }
+export function isDeleteRequest(text: string): boolean {
+  return /^(?:(?:can|could|would)\s+(?:you|u)\s+)?(?:please\s+)?(?:delete|remove)\s+(?:this|the|current)\s+(?:(?:long[\s-]*running|research)\s+)*(?:channel|thread)(?:\s+please)?[.!?]*$/i.test(
+    text.trim(),
+  );
+}
 export class Commands {
+  #deletions = new Map<
+    string,
+    { userId: string; channelId: string; taskId: number; expiresAt: number }
+  >();
   constructor(
     private cfg: Config,
     private discord: DiscordService,
@@ -141,6 +162,120 @@ export class Commands {
       member.roles.cache.has(id),
     );
   }
+  private async deletionPrompt(channelId: string, userId: string) {
+    const { task, channel } = await this.discord.researchChannelForDeletion(
+      channelId,
+      userId,
+    );
+    for (const [id, pending] of this.#deletions)
+      if (
+        pending.expiresAt <= Date.now() ||
+        (pending.userId === userId && pending.channelId === channelId)
+      )
+        this.#deletions.delete(id);
+    if (this.#deletions.size >= 1000)
+      throw new Error("Too many pending deletion requests. Try again later.");
+    const nonce = randomUUID();
+    this.#deletions.set(nonce, {
+      userId,
+      channelId,
+      taskId: task.id,
+      expiresAt: Date.now() + 5 * 60000,
+    });
+    return {
+      content: `Delete #${channel.name}? This permanently removes its Discord messages and stops tasks running here. Confirm within 5 minutes.`,
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`slop-delete:confirm:${nonce}`)
+            .setLabel("Delete research channel")
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId(`slop-delete:cancel:${nonce}`)
+            .setLabel("Keep channel")
+            .setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+      allowedMentions: noMentions,
+    };
+  }
+  async button(i: ButtonInteraction): Promise<void> {
+    const [prefix, action, nonce] = i.customId.split(":");
+    if (
+      prefix !== "slop-delete" ||
+      !nonce ||
+      !["confirm", "cancel"].includes(action ?? "")
+    )
+      return;
+    const pending = this.#deletions.get(nonce);
+    if (!pending || pending.expiresAt <= Date.now()) {
+      this.#deletions.delete(nonce);
+      await i.reply({
+        content:
+          "That confirmation expired. Use /slop delete to request a new one.",
+        flags: 64,
+      });
+      return;
+    }
+    if (pending.userId !== i.user.id || pending.channelId !== i.channelId) {
+      await i.reply({
+        content:
+          "Only the person who requested this deletion can use these buttons.",
+        flags: 64,
+      });
+      return;
+    }
+    // Consume before awaiting to prevent concurrent clicks from deleting twice.
+    this.#deletions.delete(nonce);
+    await i.deferUpdate();
+    if (action === "cancel") {
+      await i.editReply({
+        content: "Channel kept.",
+        components: [],
+        allowedMentions: noMentions,
+      });
+      return;
+    }
+    let closed = false;
+    try {
+      const current = await this.discord.researchChannelForDeletion(
+        pending.channelId,
+        i.user.id,
+      );
+      if (current.task.id !== pending.taskId)
+        throw new Error(
+          "The research task no longer matches this confirmation.",
+        );
+      await i.editReply({
+        content: "Deleting this research channel and stopping its tasks…",
+        components: [],
+        allowedMentions: noMentions,
+      });
+      await this.worker.closeResearchChannel(pending.channelId);
+      closed = true;
+      await this.discord.deleteResearchChannel(
+        pending.channelId,
+        i.user.id,
+        pending.taskId,
+      );
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        Number(error.code) === 10003
+      )
+        return;
+      if (closed)
+        this.store.update(pending.taskId, { channel_closed_at: null });
+      log.warn("Could not delete the research channel", error);
+      await i.editReply({
+        content: `${error instanceof Error ? error.message.slice(0, 1000) : "Could not delete this research channel."}${closed ? " Any stopped tasks can be resumed with /slop retry." : ""}`,
+        components: [],
+        allowedMentions: noMentions,
+      });
+    }
+  }
   async mention(message: Message): Promise<void> {
     const botRole = message.guild?.members.me?.roles.botRole?.id;
     const question = message.content
@@ -149,6 +284,22 @@ export class Commands {
       .trim();
     if (!question) {
       await message.reply({ content: help, allowedMentions: noMentions });
+      return;
+    }
+    if (isDeleteRequest(question)) {
+      try {
+        await message.reply(
+          await this.deletionPrompt(message.channelId, message.author.id),
+        );
+      } catch (error) {
+        await message.reply({
+          content:
+            error instanceof Error
+              ? error.message
+              : "Could not request channel deletion.",
+          allowedMentions: noMentions,
+        });
+      }
       return;
     }
     const kind = isResearchRequest(question) ? "research" : "question";
@@ -220,6 +371,18 @@ export class Commands {
         allowedMentions: noMentions,
       });
     };
+    if (sub === "delete") {
+      try {
+        await i.editReply(await this.deletionPrompt(i.channelId, i.user.id));
+      } catch (error) {
+        await reply(
+          error instanceof Error
+            ? error.message
+            : "Could not request channel deletion.",
+        );
+      }
+      return;
+    }
     if (sub === "help") {
       await reply(help);
       return;
@@ -255,7 +418,7 @@ export class Commands {
           visible
             .map(
               (t) =>
-                `#${t.id} · ${t.status} · ${t.kind} · ${t.question.slice(0, 100)}${t.discord_channel_id ? `\n<#${t.discord_channel_id}>` : ""}${t.error === "Waiting for Codex sign-in" ? "\nWaiting for Codex sign-in" : ""}`,
+                `#${t.id} · ${t.status} · ${t.kind} · ${t.question.slice(0, 100)}${t.channel_closed_at ? "\nResearch channel closed" : t.discord_channel_id ? `\n<#${t.discord_channel_id}>` : ""}${t.error === "Waiting for Codex sign-in" ? "\nWaiting for Codex sign-in" : ""}`,
             )
             .join("\n\n"),
         );
@@ -269,6 +432,17 @@ export class Commands {
         }
         this.worker.cancel(task.id);
         await reply(`Task #${task.id} cancelled.`);
+        return;
+      }
+      if (
+        task.channel_closed_at ||
+        this.store.isChannelClosed(task.origin_channel_id) ||
+        (task.discord_channel_id &&
+          this.store.isChannelClosed(task.discord_channel_id))
+      ) {
+        await reply(
+          "This research channel was closed. Start a new task in an existing project channel.",
+        );
         return;
       }
       if (task.error?.startsWith("Project configuration changed")) {

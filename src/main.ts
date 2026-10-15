@@ -37,17 +37,19 @@ async function main(): Promise<void> {
     drive = new DriveService(cfg, db, index);
   }
   let commands: Commands;
-  const discord = new DiscordService({
+  const discord: DiscordService = new DiscordService({
     cfg,
     db,
     index,
     queue,
     onMention: (m) => commands.mention(m),
     onInteraction: (i) => commands.interaction(i),
+    onButton: (i) => commands.button(i),
+    onResearchChannelDeleted: (id) => worker.closeResearchChannel(id),
   });
   const store = new TaskStore(db);
   store.recover();
-  const worker = new TaskWorker(
+  const worker: TaskWorker = new TaskWorker(
     cfg,
     store,
     runner,
@@ -104,6 +106,7 @@ async function main(): Promise<void> {
   });
   try {
     await discord.start();
+    await discord.organizeResearchChannels();
     try {
       await commands.register();
     } catch (e) {

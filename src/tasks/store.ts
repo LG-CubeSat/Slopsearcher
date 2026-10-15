@@ -11,6 +11,7 @@ export interface Task {
   origin_channel_id: string;
   origin_message_id: string | null;
   discord_channel_id: string | null;
+  channel_closed_at: number | null;
   runner_thread_id: string | null;
   status: TaskStatus;
   kind: "question" | "research";
@@ -49,6 +50,10 @@ export class TaskStore {
     cfg: Config,
   ): Task {
     return this.db.transaction(() => {
+      if (this.isChannelClosed(input.channelId))
+        throw new Error(
+          "This research channel is closed and cannot accept new tasks.",
+        );
       if (input.messageId) {
         const duplicate = this.db
           .prepare<[string], Task>(
@@ -103,6 +108,7 @@ export class TaskStore {
         Task,
         | "status"
         | "discord_channel_id"
+        | "channel_closed_at"
         | "runner_thread_id"
         | "progress_json"
         | "report_text"
@@ -121,6 +127,7 @@ export class TaskStore {
     const permitted = new Set([
       "status",
       "discord_channel_id",
+      "channel_closed_at",
       "runner_thread_id",
       "progress_json",
       "report_text",
@@ -139,6 +146,15 @@ export class TaskStore {
         `UPDATE tasks SET ${entries.map(([k]) => `${k}=?`).join(",")}, updated_at=? WHERE id=?`,
       )
       .run(...entries.map(([, v]) => v), Date.now(), id);
+  }
+  isChannelClosed(channelId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          "SELECT id FROM tasks WHERE kind='research' AND discord_channel_id=? AND channel_closed_at IS NOT NULL LIMIT 1",
+        )
+        .get(channelId),
+    );
   }
   recover(): void {
     this.db

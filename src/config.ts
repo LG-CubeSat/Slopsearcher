@@ -25,7 +25,12 @@ const schema = z.object({
   discordGuildId: z.string().default(""),
   discordChannelIds: csv,
   discordExcludedChannelIds: csv,
-  discordSlopsearchesCategory: z.string().default("slopsearches"),
+  discordSlopsearchesCategory: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .default("Slopsearcher Long-Running"),
   researchAllowedRoleIds: csv,
   researchAllowedUserIds: csv,
   researchEveryone: bool(true),

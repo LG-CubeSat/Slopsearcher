@@ -7,7 +7,7 @@ An experimental LG-CubeSat research assistant. Slopsearcher keeps project knowle
 - Mention the bot or use `/slop ask` for questions grounded in project history, with source links. The bot acknowledges immediately, edits that reply with its activity and elapsed time about every 15 seconds, then replaces it with the answer (including long answers as attachments). Both bot-user mentions and mentions of the bot’s managed Discord role work. Replies account for the referenced message and nearby conversation. Context retrieval has an eight-second limit so a slow history request cannot stall a question indefinitely.
 - Ask “what was @someone’s last message?” or ask for their recent messages. The bot resolves the user ID and searches authorized channels newest first, then verifies each result live.
 - Ask whether indexing has finished to get live synchronization status, rather than an answer inferred from old messages.
-- Use `/slop research`, or ask to make a question “long-running,” to create an investigation channel under `slopsearches`. Everyone in the configured Discord server can start research by default.
+- Use `/slop research`, or ask to make a question “long-running,” to create an investigation channel under **Slopsearcher Long-Running**. Everyone in the configured Discord server can start research by default.
 - Research runs through Codex App Server, posts progress, saves checkpoints, and resumes persisted threads after a restart. The default is **GPT-6 Luna with max reasoning**.
 - SQLite FTS5 indexes Discord messages, threads, and supported Drive documents. The agent can search, open a source, and fetch the discussion surrounding a message.
 - Discord events update edited/deleted messages immediately. Periodic history scans catch new messages, and full reconciliation catches older edits and deletions. Drive folder scans check for additions, changes, removals, and moves.
@@ -64,27 +64,38 @@ The bot can connect and index Discord before Codex sign-in is complete. Research
 1. Create an application and bot in the [Discord Developer Portal](https://discord.com/developers/applications).
 2. Enable **Message Content Intent** in the Bot settings. The bot requests Guilds, Guild Messages, and Message Content gateway intents.
 3. Install it in your server with the `bot` and `applications.commands` scopes.
-4. Grant **View Channel**, **Read Message History**, **Send Messages**, **Send Messages in Threads**, **Attach Files**, and **Manage Channels** where the bot should work. Manage Channels is used to create investigation channels and the `slopsearches` category. Administrator permission is unnecessary.
+4. Grant **View Channel**, **Read Message History**, **Send Messages**, **Send Messages in Threads**, **Attach Files**, and **Manage Channels** where the bot should work. Manage Channels is used to create investigation channels and the **Slopsearcher Long-Running** category. Administrator permission is unnecessary.
 5. Enable Developer Mode in Discord and copy the server ID into `DISCORD_GUILD_ID`.
 
 `DISCORD_CHANNEL_IDS` optionally limits indexing to a comma-separated list of channels; a parent ID also includes its threads. An empty list indexes readable channels across the selected server. `DISCORD_EXCLUDED_CHANNEL_IDS` takes precedence over inclusions. The bot ignores DMs and other servers.
 
 Commands are registered in the configured server on startup without deleting unrelated application commands:
 
-| Command                    | Purpose                                                    |
-| -------------------------- | ---------------------------------------------------------- |
-| `/slop ask question:`      | Ask about the project; the answer is posted in the channel |
-| `/slop research question:` | Start an investigation with a dedicated channel            |
-| `/slop search query:`      | Find original source messages/documents                    |
-| `/slop status [id:]`       | Show your recent tasks or one task                         |
-| `/slop cancel id:`         | Stop your queued or running task                           |
-| `/slop retry id:`          | Retry a failed or cancelled task                           |
-| `/slop sync`               | Refresh sources now; requires Manage Server                |
-| `/slop help`               | Show usage                                                 |
+| Command                    | Purpose                                                      |
+| -------------------------- | ------------------------------------------------------------ |
+| `/slop ask question:`      | Ask about the project; the answer is posted in the channel   |
+| `/slop research question:` | Start an investigation with a dedicated channel              |
+| `/slop search query:`      | Find original source messages/documents                      |
+| `/slop status [id:]`       | Show your recent tasks or one task                           |
+| `/slop cancel id:`         | Stop your queued or running task                             |
+| `/slop delete`             | Confirm deletion of the current bot-created research channel |
+| `/slop retry id:`          | Retry a failed or cancelled task                             |
+| `/slop sync`               | Refresh sources now; requires Manage Server                  |
+| `/slop help`               | Show usage                                                   |
 
 A server manager can inspect and cancel tasks in the current project. To restrict who may start research, set `RESEARCH_EVERYONE=false` and configure `RESEARCH_ALLOWED_ROLE_IDS` and/or `RESEARCH_ALLOWED_USER_IDS`. Questions remain available to server members.
 
 Research channels copy the originating channel's permission overwrites. A task started inside a thread gets a channel private to the requester and bot (server administrators retain their usual access). Cross-channel retrieval checks the requester’s access and the destination audience; private channels with different access overwrites are deliberately excluded. Source access is checked again before delivering a report. Drive source-folder contents are treated as shared project knowledge for this server, so choose the source and report folders accordingly.
+
+## Long-running research channels
+
+Research uses text channels under **Slopsearcher Long-Running**. The category name is configurable with `DISCORD_SLOPSEARCHES_CATEGORY`. On startup, the bot creates or locates that category and moves its verified existing research channels there while preserving their permission overwrites.
+
+Inside a research channel, mention the bot with **“delete this channel”** or use **`/slop delete`**. The research creator or a server manager can request deletion. The bot shows **Delete research channel** and **Keep channel** buttons; only the requester can use them, and confirmation expires after five minutes or a bot restart.
+
+Deletion is limited to the current channel: it must be a text channel in the configured category, match a saved research task for this project, and carry this bot instance’s matching task marker. These checks and the requester’s permissions are repeated before deletion. Category membership or a matching channel name alone is insufficient. No deletion tool or arbitrary channel selector is exposed to the research model. Regular channels and the category itself are rejected.
+
+Confirmation permanently removes the channel’s Discord history and stops pending/running tasks associated with it. Closed channels cannot accept or retry tasks, and pending report delivery is stopped. Saved local task/report records and existing Drive reports remain available. A failed Discord deletion leaves stopped tasks available for `/slop retry`.
 
 ## Questions about server members
 
