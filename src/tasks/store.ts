@@ -43,6 +43,7 @@ export class TaskStore {
       userId: string;
       channelId: string;
       messageId?: string;
+      outputMessageId?: string;
       context?: unknown;
     },
     cfg: Config,
@@ -77,7 +78,7 @@ export class TaskStore {
         );
       const id = this.db
         .prepare(
-          "INSERT INTO tasks(question,requested_by,origin_channel_id,origin_message_id,status,kind,context_json,created_at,updated_at,project_key) VALUES(?,?,?,?, 'pending',?,?,?,?,?)",
+          "INSERT INTO tasks(question,requested_by,origin_channel_id,origin_message_id,status,kind,context_json,created_at,updated_at,project_key,output_message_id) VALUES(?,?,?,?, 'pending',?,?,?,?,?,?)",
         )
         .run(
           input.question,
@@ -89,6 +90,7 @@ export class TaskStore {
           Date.now(),
           Date.now(),
           projectKey(cfg),
+          input.outputMessageId ?? null,
         ).lastInsertRowid;
       this.event(Number(id), "created", { kind: input.kind });
       return this.get(Number(id))!;

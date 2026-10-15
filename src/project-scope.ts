@@ -51,7 +51,7 @@ export function bindProject(cfg: Config, db: Db, index: SourceIndex): void {
       ).run(Date.now());
       db.prepare("UPDATE tasks SET delivery_pending=0").run();
       db.prepare(
-        "DELETE FROM service_state WHERE key='discord-reconciled'",
+        "DELETE FROM service_state WHERE key IN ('discord-reconciled','discord-sync-success','discord-sync-failed')",
       ).run();
     }
     const save = db.prepare(

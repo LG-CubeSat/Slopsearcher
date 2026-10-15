@@ -156,10 +156,17 @@ export class Commands {
       });
       return;
     }
+    let placeholder: Message | undefined;
     try {
       if (question.length > 4000)
         throw new Error("Please keep the question under 4,000 characters.");
       const context = await this.discord.context(message);
+      if (kind === "question")
+        placeholder = await message.reply({
+          content:
+            "Your question is queued. I’ll update this message with the answer.",
+          allowedMentions: noMentions,
+        });
       const task = this.store.create(
         {
           kind,
@@ -167,34 +174,35 @@ export class Commands {
           userId: message.author.id,
           channelId: message.channelId,
           messageId: message.id,
+          ...(placeholder ? { outputMessageId: placeholder.id } : {}),
           context,
         },
         this.cfg,
       );
-      await message.reply({
-        content:
-          kind === "research"
-            ? `Research #${task.id} is queued. I’ll post its channel link here when it starts.`
-            : `Question #${task.id} is queued. I’ll post the answer here.`,
-        allowedMentions: noMentions,
-      });
+      if (kind === "research")
+        await message.reply({
+          content: `Research #${task.id} is queued. I’ll post its channel link here when it starts.`,
+          allowedMentions: noMentions,
+        });
       this.worker.tick();
     } catch (e) {
-      await message.reply({
+      const options = {
         content:
           e instanceof Error
             ? e.message.slice(0, 1000)
             : "Could not queue that request.",
         allowedMentions: noMentions,
-      });
+      };
+      if (placeholder) await placeholder.edit(options);
+      else await message.reply(options);
     }
   }
   async interaction(i: ChatInputCommandInteraction): Promise<void> {
     if (i.commandName !== "slop") return;
-    await i.deferReply({ flags: 64 });
     const sub = i.options.getSubcommand();
+    await i.deferReply(sub === "ask" ? {} : { flags: 64 });
     const reply = async (content: string) => {
-      await i.editReply({
+      return await i.editReply({
         content: content.slice(0, 1950),
         allowedMentions: noMentions,
       });
@@ -327,6 +335,12 @@ export class Commands {
       return;
     }
     try {
+      const placeholder =
+        kind === "question"
+          ? await reply(
+              "Your question is queued. I’ll update this message with the answer.",
+            )
+          : null;
       const task = this.store.create(
         {
           kind,
@@ -334,12 +348,14 @@ export class Commands {
           userId: i.user.id,
           channelId: i.channelId,
           messageId: i.id,
+          ...(placeholder ? { outputMessageId: placeholder.id } : {}),
         },
         this.cfg,
       );
-      await reply(
-        `Task #${task.id} is queued.${kind === "research" ? " I’ll post its research channel link here when it starts." : " I’ll post the answer in this channel."}`,
-      );
+      if (kind === "research")
+        await reply(
+          `Research #${task.id} is queued. I’ll post its research channel link here when it starts.`,
+        );
       this.worker.tick();
     } catch (e) {
       await reply(

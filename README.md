@@ -4,7 +4,8 @@ An experimental LG-CubeSat research assistant. Slopsearcher keeps project knowle
 
 ## What works
 
-- Mention the bot or use `/slop ask` for questions grounded in project history, with source links. Replies include the referenced message and nearby conversation.
+- Mention the bot or use `/slop ask` for questions grounded in project history, with source links. The queued reply is edited into the answer, including long answers as attachments. Replies include the referenced message and nearby conversation.
+- Ask whether indexing has finished to get live synchronization status, rather than an answer inferred from old messages.
 - Use `/slop research`, or ask to make a question “long-running,” to create an investigation channel under `slopsearches`. Everyone in the configured Discord server can start research by default.
 - Research runs through Codex App Server, posts progress, saves checkpoints, and resumes persisted threads after a restart. The default is **GPT-6 Luna with max reasoning**.
 - SQLite FTS5 indexes Discord messages, threads, and supported Drive documents. The agent can search, open a source, and fetch the discussion surrounding a message.

@@ -188,12 +188,87 @@ export class DiscordService {
         this.opts.queue,
         full,
         () => this.#stopping,
-      ).finally(() => {
-        this.#syncing = undefined;
-        this.#fullSync = false;
-      });
+      )
+        .then(() => {
+          this.saveSyncState("discord-sync-success", Date.now());
+          this.opts.db
+            .prepare(
+              "DELETE FROM service_state WHERE key='discord-sync-failed'",
+            )
+            .run();
+        })
+        .catch((error: unknown) => {
+          this.saveSyncState("discord-sync-failed", Date.now());
+          throw error;
+        })
+        .finally(() => {
+          this.#syncing = undefined;
+          this.#fullSync = false;
+        });
     }
     return this.#syncing;
+  }
+  private saveSyncState(key: string, value: number): void {
+    this.opts.db
+      .prepare(
+        "INSERT INTO service_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      )
+      .run(key, String(value));
+  }
+  status(scope: AccessScope): unknown {
+    const state = (key: string) => {
+      const value = this.opts.db
+        .prepare<[string], { value: string }>(
+          "SELECT value FROM service_state WHERE key=?",
+        )
+        .get(key)?.value;
+      return value ? new Date(Number(value)).toISOString() : null;
+    };
+    const ids = scope.channelIds;
+    const count = ids.length
+      ? this.opts.db
+          .prepare<string[], { n: number }>(
+            `SELECT COUNT(*) n FROM sources WHERE kind='discord' AND deleted_at IS NULL AND channel_id IN (${ids.map(() => "?").join(",")})`,
+          )
+          .get(...ids)!.n
+      : 0;
+    return {
+      checkedAt: new Date().toISOString(),
+      connected: this.client.isReady(),
+      syncing: Boolean(this.#syncing),
+      syncType: this.#syncing
+        ? this.#fullSync
+          ? "full reconciliation"
+          : "incremental refresh"
+        : null,
+      initialSyncCompleted: Boolean(state("discord-reconciled")),
+      lastFullSyncCompletedAt: state("discord-reconciled"),
+      lastRefreshCompletedAt: state("discord-sync-success"),
+      lastRefreshFailedAt: state("discord-sync-failed"),
+      indexedMessagesInAccessibleChannels: count,
+      countScope:
+        "Only channels readable by the requester and this conversation's audience; not necessarily the whole server.",
+      coverage:
+        "Configured channels and threads the bot can read; inaccessible channels are excluded.",
+      refreshIntervalSeconds: this.opts.cfg.syncIntervalSeconds,
+      fullReconciliationIntervalSeconds: this.opts.cfg.reconcileIntervalSeconds,
+      driveSourceConfigured: Boolean(this.opts.cfg.driveSourceFolderId),
+    };
+  }
+  async notify(task: Task, content: string): Promise<void> {
+    if (task.kind === "question" && task.output_message_id) {
+      const c = await this.client.channels.fetch(task.origin_channel_id);
+      if (!c?.isTextBased() || !c.isSendable())
+        throw new Error("Destination channel is not sendable");
+      await c.messages.edit(task.output_message_id, {
+        content,
+        allowedMentions: noMentions,
+      });
+    } else
+      await this.send(
+        task.discord_channel_id ?? task.origin_channel_id,
+        content,
+      );
   }
   async scope(
     userId: string,
@@ -314,7 +389,12 @@ export class DiscordService {
     }
     return {
       reply: reply
-        ? { author: reply.author.username, text: reply.content, url: reply.url }
+        ? {
+            author: reply.author.username,
+            bot: reply.author.bot,
+            text: reply.content,
+            url: reply.url,
+          }
         : null,
       nearby: [...nearby.values()].reverse().map((m) => ({
         author: m.author.username,
@@ -448,23 +528,20 @@ export class DiscordService {
     if (!c?.isTextBased() || !c.isSendable())
       throw new Error("Destination channel is not sendable");
     const report = task.report_text ?? "No report was returned.";
-    const file = task.kind === "research" || report.length > 1900;
+    const file =
+      task.kind === "research" ||
+      report.length > 1900 ||
+      (task.status === "failed" && Boolean(task.report_text));
     const content =
       task.status === "failed"
         ? `Task #${task.id} failed after retries.${task.report_text ? " The latest partial report is attached." : ""} The operator can check the logs; you can use /slop retry.`
         : file
           ? `Task #${task.id} completed. The full report is attached.${task.report_file_id ? `\nDrive copy: https://drive.google.com/file/d/${task.report_file_id}/view` : ""}\n\n${report.slice(0, 1200)}`
           : report;
-    // A persisted message ID plus enforced nonce makes retrying delivery safe.
-    if (task.output_message_id) {
-      await c.messages.edit(task.output_message_id, {
-        content: content.slice(0, 1900),
-        allowedMentions: noMentions,
-      });
-      return task.output_message_id;
-    }
-    const sent = await c.send({
+    const payload = {
       content: content.slice(0, 1900),
+      allowedMentions: noMentions,
+      attachments: [],
       ...(file && (task.status !== "failed" || Boolean(task.report_text))
         ? {
             files: [
@@ -474,6 +551,25 @@ export class DiscordService {
             ],
           }
         : {}),
+    };
+    // Persisted reply IDs survive restarts. Replace attachments on repeated edits.
+    if (task.output_message_id) {
+      try {
+        await c.messages.edit(task.output_message_id, payload);
+        return task.output_message_id;
+      } catch (error) {
+        // Recreate a deleted reply, but retry permission/network errors normally.
+        if (
+          !error ||
+          typeof error !== "object" ||
+          !("code" in error) ||
+          error.code !== 10008
+        )
+          throw error;
+      }
+    }
+    const sent = await c.send({
+      ...payload,
       nonce: createHash("sha256")
         .update(`${this.instanceId}:${task.id}:result`)
         .digest("hex")
@@ -481,9 +577,6 @@ export class DiscordService {
       enforceNonce: true,
       allowedMentions: noMentions,
     });
-    if (!file && report.length > 1900 && task.status !== "failed")
-      for (const part of chunks(report.slice(1900)))
-        await c.send({ content: part, allowedMentions: noMentions });
     return sent.id;
   }
   async stop(): Promise<void> {

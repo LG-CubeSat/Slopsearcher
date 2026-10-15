@@ -45,6 +45,17 @@ export function projectTools(
   };
   const tools: ToolDefinition[] = [
     {
+      name: "get_bot_status",
+      description:
+        "Read my live connection and Discord indexing status, completed synchronization timestamps, accessible message count, refresh schedule and whether a Drive source is configured. Use this for questions about whether I have finished indexing or am keeping up to date. Chat history is not runtime status.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      invoke: async () => discord.status(scope),
+    },
+    {
       name: "search_project",
       description:
         "Search project Discord messages and Drive documents by keywords or part numbers. Returns source IDs and URLs; open a source for more text. Try multiple focused searches rather than relying on a single broad query.",
