@@ -234,7 +234,7 @@ export class TaskWorker {
             JSON.parse(task.progress_json) as { sourceChannels?: string[] }
           ).sourceChannels ?? [task.origin_channel_id];
           if (
-            task.status === "completed" &&
+            Boolean(task.report_text) &&
             used.some((id) => !scope.channelIds.includes(id))
           )
             throw new Error(

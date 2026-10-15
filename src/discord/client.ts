@@ -9,6 +9,7 @@ import {
   GatewayIntentBits,
   Partials,
   PermissionFlagsBits,
+  PermissionsBitField,
   type ChatInputCommandInteraction,
   type GuildBasedChannel,
   type Message,
@@ -378,6 +379,26 @@ export class DiscordService {
               deny: 0n,
             },
           ];
+    const availablePermissions = guild.members.me!.permissions.has(
+      PermissionFlagsBits.Administrator,
+    )
+      ? PermissionsBitField.All
+      : guild.members.me!.permissions.bitfield;
+    const audienceBits =
+      PermissionFlagsBits.ViewChannel | PermissionFlagsBits.ReadMessageHistory;
+    for (const overwrite of overwrites) {
+      if (
+        ((overwrite.allow | overwrite.deny) &
+          audienceBits &
+          ~availablePermissions) !==
+        0n
+      )
+        throw new Error(
+          "Grant the bot View Channel and Read Message History on its server role before creating research channels",
+        );
+      overwrite.allow &= availablePermissions;
+      overwrite.deny &= availablePermissions;
+    }
     const botPermissions =
       PermissionFlagsBits.ViewChannel |
       PermissionFlagsBits.ReadMessageHistory |
@@ -430,7 +451,7 @@ export class DiscordService {
     const file = task.kind === "research" || report.length > 1900;
     const content =
       task.status === "failed"
-        ? `Task #${task.id} failed after retries. The operator can check the logs; you can use /slop retry.`
+        ? `Task #${task.id} failed after retries.${task.report_text ? " The latest partial report is attached." : ""} The operator can check the logs; you can use /slop retry.`
         : file
           ? `Task #${task.id} completed. The full report is attached.${task.report_file_id ? `\nDrive copy: https://drive.google.com/file/d/${task.report_file_id}/view` : ""}\n\n${report.slice(0, 1200)}`
           : report;
@@ -444,11 +465,11 @@ export class DiscordService {
     }
     const sent = await c.send({
       content: content.slice(0, 1900),
-      ...(file && task.status !== "failed"
+      ...(file && (task.status !== "failed" || Boolean(task.report_text))
         ? {
             files: [
               new AttachmentBuilder(Buffer.from(report), {
-                name: `slopsearch-${task.id}.md`,
+                name: `slopsearch-${task.id}${task.status === "failed" ? "-partial" : ""}.md`,
               }),
             ],
           }

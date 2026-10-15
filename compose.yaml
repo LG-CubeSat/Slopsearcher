@@ -8,6 +8,7 @@ services:
       DB_PATH: /data/slopsearcher.db
       GOOGLE_TOKEN_PATH: /data/google-token.json
       SLOP_CODEX_HOME: /data/codex
+      CODEX_HOME: /data/codex
       CODEX_BIN: codex
     volumes:
       - ./data:/data

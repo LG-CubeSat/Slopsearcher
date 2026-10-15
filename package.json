@@ -19,7 +19,9 @@
     "test": "vitest run",
     "health": "node dist/cli/health.js",
     "format": "prettier --write src scripts *.json *.md *.yaml .github/workflows/*.yml",
-    "format:check": "prettier --check src scripts *.json *.md *.yaml .github/workflows/*.yml"
+    "format:check": "prettier --check src scripts *.json *.md *.yaml .github/workflows/*.yml",
+    "memory:refresh": "tsx src/cli/memory.ts",
+    "runner:check": "tsx src/cli/runner-check.ts"
   },
   "dependencies": {
     "@googleapis/drive": "^26.0.2",

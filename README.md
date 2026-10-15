@@ -184,6 +184,8 @@ npm run doctor -- --runner   # App Server handshake/account checks; no inference
 npm run doctor -- --connect  # Read-only Discord and Drive connectivity checks
 npm run search -- "radio"    # Search local indexed sources
 npm run backup               # Online SQLite backup
+npm run memory:refresh       # Distill one batch now (uses the configured model)
+npm run runner:check         # Two live model turns to verify tool calls and resumption
 npm run health               # Check the running bot's recent heartbeat
 npm run format:check
 ```

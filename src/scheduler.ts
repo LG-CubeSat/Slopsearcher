@@ -15,9 +15,10 @@ export class Scheduler {
       if (this.#stopped) return;
       const pending = Promise.resolve()
         .then(work)
-        .catch((e) =>
-          log.error(`${name} failed; retrying on the next interval`, e),
-        )
+        .catch((e) => {
+          if (!this.#stopped)
+            log.error(`${name} failed; retrying on the next interval`, e);
+        })
         .finally(() => {
           this.#running.delete(pending);
           if (!this.#stopped) schedule(intervalMs);

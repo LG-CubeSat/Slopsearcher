@@ -1,6 +1,11 @@
 import { existsSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { REST, Routes } from "discord.js";
+import {
+  REST,
+  Routes,
+  PermissionsBitField,
+  PermissionFlagsBits,
+} from "discord.js";
 import { loadConfig } from "../config.ts";
 import { openAndMigrate } from "../db/index.ts";
 import { SourceIndex } from "../index/index.ts";
@@ -116,6 +121,34 @@ async function main(): Promise<void> {
         const rest = new REST({ version: "10" }).setToken(cfg.discordToken);
         await rest.get(Routes.guild(cfg.discordGuildId));
         check(true, "Discord token can access configured server");
+        const me = (await rest.get(Routes.user("@me"))) as { id: string };
+        const member = (await rest.get(
+          Routes.guildMember(cfg.discordGuildId, me.id),
+        )) as { roles: string[] };
+        const roles = (await rest.get(
+          Routes.guildRoles(cfg.discordGuildId),
+        )) as { id: string; permissions: string }[];
+        const bits = roles
+          .filter(
+            (r) => r.id === cfg.discordGuildId || member.roles.includes(r.id),
+          )
+          .reduce((n, r) => n | BigInt(r.permissions), 0n);
+        const permissions = new PermissionsBitField(bits);
+        check(
+          permissions.has(PermissionFlagsBits.ManageChannels),
+          "Bot can create research channels",
+        );
+        check(
+          permissions.has(PermissionFlagsBits.AttachFiles),
+          "Bot role allows report attachments",
+        );
+        const commands = (await rest.get(
+          Routes.applicationGuildCommands(me.id, cfg.discordGuildId),
+        )) as { name: string }[];
+        check(
+          commands.some((c) => c.name === "slop"),
+          "/slop is registered in the selected server",
+        );
       }
       if (cfg.driveSourceFolderId || cfg.driveReportsFolderId) {
         const drive = new DriveService(cfg, db, index);

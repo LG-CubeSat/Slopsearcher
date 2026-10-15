@@ -50,6 +50,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (m.method === "turn/start") {
     if (m.params.model && m.params.model !== "gpt-6-luna")
       throw Error("wrong model");
+    if (
+      m.params.sandboxPolicy.type !== "readOnly" ||
+      m.params.sandboxPolicy.networkAccess !== false ||
+      m.params.sandboxPolicy.access
+    )
+      throw Error("invalid turn sandbox policy");
     if (m.params.effort !== "max") throw Error("wrong effort");
     current = m.params.input[0].text;
     send({ id: m.id, result: { turn: { id: "turn-test" } } });

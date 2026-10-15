@@ -43,17 +43,15 @@ const file = {
   webViewLink: "https://drive.google.com/doc",
 };
 const stubGet = () =>
-  vi
-    .spyOn(service.api.files, "get")
-    .mockImplementation(
-      async (p: any) =>
-        ({
-          data:
-            p.fileId === "root"
-              ? { id: "root", mimeType: "application/vnd.google-apps.folder" }
-              : Readable.from(["Radio uses RFM95"]),
-        }) as any,
-    );
+  vi.spyOn(service.api.files, "get").mockImplementation(
+    async (p: any) =>
+      ({
+        data:
+          p.fileId === "root"
+            ? { id: "root", mimeType: "application/vnd.google-apps.folder" }
+            : Readable.from(["Radio uses RFM95"]),
+      }) as any,
+  );
 it("recursively indexes folder contents, skips reports, and avoids downloading unchanged files", async () => {
   const get = stubGet();
   vi.spyOn(service.api.files, "list").mockImplementation(

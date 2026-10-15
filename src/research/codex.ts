@@ -235,16 +235,7 @@ export class CodexRunner implements ResearchRunner {
         input: [{ type: "text", text: request.prompt }],
         effort: this.cfg.codexEffort,
         approvalPolicy: "never",
-        sandboxPolicy: {
-          type: "readOnly",
-          access: {
-            type: "restricted",
-            includePlatformDefaults: true,
-            readableRoots: [
-              join(dirname(this.cfg.dbPath), "research-workspace"),
-            ],
-          },
-        },
+        sandboxPolicy: { type: "readOnly", networkAccess: false },
         ...(request.outputSchema ? { outputSchema: request.outputSchema } : {}),
       });
       turnId = started.turn.id;
