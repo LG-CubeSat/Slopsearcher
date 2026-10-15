@@ -4,6 +4,13 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
   invoke: (input: unknown) => Promise<unknown>;
 }
+/** Only application-created instances may add image content to tool output. */
+export class VisualToolResult {
+  constructor(
+    readonly data: unknown,
+    readonly imageUrl: string,
+  ) {}
+}
 export interface RunRequest {
   threadId?: string | null;
   prompt: string;

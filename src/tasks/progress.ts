@@ -14,8 +14,16 @@ export const questionActivities = new Set([
   "Writing the answer…",
   "Looking up the Discord member…",
   "Finding their recent messages…",
+  "Opening a web page…",
+  "Following a page link…",
+  "Inspecting the web page…",
+  "Capturing a screenshot…",
 ]);
 export const toolActivity = new Map<string, string>([
+  ["browser_open", "Opening a web page…"],
+  ["browser_follow", "Following a page link…"],
+  ["browser_scroll", "Inspecting the web page…"],
+  ["browser_screenshot", "Capturing a screenshot…"],
   ["resolve_discord_member", "Looking up the Discord member…"],
   ["get_member_messages", "Finding their recent messages…"],
   ["search_project", "Searching project history…"],

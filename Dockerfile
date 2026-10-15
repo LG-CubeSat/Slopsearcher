@@ -13,6 +13,8 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app/package.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN npx playwright install --with-deps chromium --only-shell && chmod -R a+rX /opt/playwright
 RUN mkdir -p /data && chown node:node /data
 USER node
 ENV DB_PATH=/data/slopsearcher.db GOOGLE_TOKEN_PATH=/data/google-token.json SLOP_CODEX_HOME=/data/codex CODEX_HOME=/data/codex

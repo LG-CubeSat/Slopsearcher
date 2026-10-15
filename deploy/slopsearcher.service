@@ -10,6 +10,7 @@ WorkingDirectory=%h/repos/Slopsearcher
 Environment="PATH=%h/.local/share/slopsearcher-runtime/node_modules/.bin:/usr/local/bin:/usr/bin:/bin"
 Environment="HOME=%h/repos/Slopsearcher/data/service-home"
 Environment="CODEX_BIN=%h/.local/share/slopsearcher-runtime/bin/codex"
+Environment="PLAYWRIGHT_BROWSERS_PATH=%h/.local/share/slopsearcher-runtime/browsers"
 ExecStart=%h/.local/share/slopsearcher-runtime/node_modules/.bin/node %h/repos/Slopsearcher/dist/main.js
 # PID namespaces may reparent the main process. Track the entire cgroup and
 # restart when it empties; an explicit systemctl stop still stops the service.
@@ -44,10 +45,15 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictSUIDSGID=true
 RestrictRealtime=true
-RestrictNamespaces=true
+# Chromium's enabled renderer sandbox needs nested user, PID and network namespaces.
+# Filesystem and cgroup namespace creation remain blocked.
+RestrictNamespaces=user pid net
 LockPersonality=true
 SystemCallArchitectures=native
 SystemCallFilter=~@mount @reboot @swap @raw-io @debug
+# Chromium chroots its renderer into an empty root inside its own user namespace.
+# No host capabilities are granted; all mount syscalls remain blocked.
+SystemCallFilter=chroot
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 TasksMax=256
 MemoryMax=2G

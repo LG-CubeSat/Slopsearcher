@@ -16,6 +16,8 @@ import { runtimeLock } from "./runtime-lock.ts";
 import { createBackup } from "./backup.ts";
 import { bindProject } from "./project-scope.ts";
 import { existsSync, chmodSync } from "node:fs";
+import { BrowserArtifacts } from "./browser/artifacts.ts";
+import { BrowserSession } from "./browser/session.ts";
 const log = logger("main");
 async function main(): Promise<void> {
   process.umask(0o077);
@@ -105,6 +107,27 @@ async function main(): Promise<void> {
     void shutdown("SIGTERM").then(() => process.exit(0));
   });
   try {
+    if (cfg.browserEnabled) {
+      const browser = new BrowserSession(
+        cfg,
+        new BrowserArtifacts(cfg, db),
+        0,
+        AbortSignal.timeout(30000),
+      );
+      try {
+        await browser.prepare();
+        log.info(
+          "Browser ready: sandboxed Chromium with public-page gateway and screenshot support",
+        );
+      } catch (error) {
+        log.warn(
+          "Browser startup failed; browser tools will report errors until the runtime is fixed",
+          error,
+        );
+      } finally {
+        await browser.close();
+      }
+    }
     await discord.start();
     await discord.organizeResearchChannels();
     try {
@@ -152,6 +175,12 @@ async function main(): Promise<void> {
     scheduler.every("Task dispatcher", 2000, () => worker.tick(), true);
     scheduler.every("Question progress", 15000, () => worker.progress(), true);
     scheduler.every("Report delivery", 15000, () => worker.deliver(), true);
+    scheduler.every(
+      "Screenshot retention",
+      3600000,
+      () => new BrowserArtifacts(cfg, db).cleanup(),
+      true,
+    );
     scheduler.every(
       "Memory extraction",
       cfg.memoryIntervalSeconds * 1000,

@@ -26,6 +26,8 @@ If a user asks whether a question can be made “long-running,” the bot can st
 
 Requests from Discord must not execute commands, run arbitrary code, install software, or change server settings. Restrict the model to application-controlled knowledge retrieval and optional hosted web search. The application handles knowledge-base updates and configured Drive report writes. Long-running investigations use the persisted task queue, not shell access. Enforce this with disabled runner capabilities and an OS service sandbox that hides personal files and confines persistent writes to the bot’s data directory.
 
+Public web pages can also be opened in a sandboxed Chromium browser through application-controlled tools. The bot can read rendered text, follow numbered links, scroll, analyze actual screenshots, and select screenshots for attachment to its final Discord reply. Browser sessions are anonymous and reset between research turns. Every network request uses a public-address-only gateway with pinned DNS resolution; private/reserved IPs, local files, nonstandard ports, form submissions, WebSockets, service workers and downloads are blocked. The model receives no shell, arbitrary JavaScript evaluation, browser debugger endpoint, login credentials or personal browser profile. See [browser operation](docs/browser.md) for setup and limits.
+
 Research tasks run through Codex App Server. The design may support Claude Code as an additional research backend later.
 
 ## Recommended technical approach

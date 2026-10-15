@@ -10,6 +10,7 @@ import { join, dirname } from "node:path";
 import type { Config } from "../config.ts";
 import { RpcClient, type RpcMessage } from "./rpc.ts";
 import type { ResearchRunner, RunRequest } from "./types.ts";
+import { VisualToolResult } from "./types.ts";
 
 export class CodexRunner implements ResearchRunner {
   #authCheck: { at: number; ready: boolean } | undefined;
@@ -80,6 +81,14 @@ export class CodexRunner implements ResearchRunner {
             };
           try {
             const result = await tool.invoke(m.params.arguments);
+            if (result instanceof VisualToolResult)
+              return {
+                success: true,
+                contentItems: [
+                  { type: "inputText", text: JSON.stringify(result.data) },
+                  { type: "inputImage", imageUrl: result.imageUrl },
+                ],
+              };
             return {
               success: true,
               contentItems: [

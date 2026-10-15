@@ -27,6 +27,7 @@ import { toSourceInput } from "./normalize.ts";
 import { resolveDiscordMember, recentMemberMessages } from "./members.ts";
 import { audienceCompatible } from "./access.ts";
 import { loadMessageImages, messageImages } from "./images.ts";
+import { BrowserArtifacts } from "../browser/artifacts.ts";
 import type { Task } from "../tasks/store.ts";
 import { chunks, noMentions } from "../util.ts";
 const log = logger("discord");
@@ -297,6 +298,7 @@ export class DiscordService {
       refreshIntervalSeconds: this.opts.cfg.syncIntervalSeconds,
       fullReconciliationIntervalSeconds: this.opts.cfg.reconcileIntervalSeconds,
       driveSourceConfigured: Boolean(this.opts.cfg.driveSourceFolderId),
+      browserEnabled: this.opts.cfg.browserEnabled,
     };
   }
   async notify(task: Task, content: string): Promise<void> {
@@ -843,6 +845,10 @@ export class DiscordService {
     if (!c?.isTextBased() || !c.isSendable())
       throw new Error("Destination channel is not sendable");
     const report = task.report_text ?? "No report was returned.";
+    const screenshots = await new BrowserArtifacts(
+      this.opts.cfg,
+      this.opts.db,
+    ).files(task.id);
     const file =
       task.kind === "research" ||
       report.length > 1900 ||
@@ -857,15 +863,22 @@ export class DiscordService {
       content: content.slice(0, 1900),
       allowedMentions: noMentions,
       attachments: [],
-      ...(file && (task.status !== "failed" || Boolean(task.report_text))
-        ? {
-            files: [
+      files: [
+        ...(file && (task.status !== "failed" || Boolean(task.report_text))
+          ? [
               new AttachmentBuilder(Buffer.from(report), {
                 name: `slopsearch-${task.id}${task.status === "failed" ? "-partial" : ""}.md`,
               }),
-            ],
-          }
-        : {}),
+            ]
+          : []),
+        ...screenshots.map(
+          (screenshot) =>
+            new AttachmentBuilder(screenshot.data, {
+              name: screenshot.name,
+              description: screenshot.description,
+            }),
+        ),
+      ],
     };
     // Persisted reply IDs survive restarts. Replace attachments on repeated edits.
     if (task.output_message_id) {
