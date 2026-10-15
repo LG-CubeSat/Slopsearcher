@@ -6,6 +6,8 @@
 
 The server stays running to scan messages across the project's Discord channels and maintain a small, searchable local database of important CubeSat information. The memory should preserve useful facts and context such as technical details, requirements, decisions, rationale, and unresolved questions, with links to the original messages or documents. It is a research index; the Discord and Drive sources remain available for verification.
 
+The bot should periodically recheck its configured Discord channels and Google Drive folder, incrementally adding new or changed material and updating or retiring stale memory so its information stays current. Keep source links and timestamps so updates can be traced back to their origins.
+
 The bot can also read a configured Google Drive project folder. It can use those documents alongside Discord history and write finished research reports to a configured Drive reports folder.
 
 ## Questions and investigations
