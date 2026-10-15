@@ -11,6 +11,7 @@ import {
   type Message,
 } from "discord.js";
 import { projectKey } from "../project-scope.ts";
+import { toggleTsundere } from "../personality.ts";
 import { channelConfigured, type Config } from "../config.ts";
 import type { TaskStore } from "../tasks/store.ts";
 import type { TaskWorker } from "../tasks/worker.ts";
@@ -103,10 +104,15 @@ export const command = new SlashCommandBuilder()
       .setDescription("Refresh project sources now (server managers)"),
   )
   .addSubcommand((c) =>
+    c
+      .setName("tsundere")
+      .setDescription("Toggle the cute catgirl tsundere voice for this server"),
+  )
+  .addSubcommand((c) =>
     c.setName("help").setDescription("Show what Slopsearcher can do"),
   );
 export const help =
-  "Mention me or use /slop ask to ask about the project. Reply to a message and mention me to include that conversation. Ask me to make a question long-running, or use /slop research, to start a dedicated investigation.\n\n/slop search finds original sources. /slop status shows your tasks. /slop cancel stops a task, and /slop retry retries a failed or cancelled one. Research reports include source links and are attached in the task’s channel. Long-running channels live under Slopsearcher Long-Running. Inside one, use /slop delete or mention me with “delete this channel”; the creator or a server manager must confirm the deletion.";
+  "Mention me or use /slop ask to ask about the project. Reply to a message and mention me to include that conversation. Ask me to make a question long-running, or use /slop research, to start a dedicated investigation.\n\n/slop search finds original sources. /slop status shows your tasks. /slop cancel stops a task, and /slop retry retries a failed or cancelled one. /slop tsundere toggles a cute catgirl tsundere voice for the server. Research reports include source links and are attached in the task’s channel. Long-running channels live under Slopsearcher Long-Running. Inside one, use /slop delete or mention me with “delete this channel”; the creator or a server manager must confirm the deletion.";
 export function isResearchRequest(text: string): boolean {
   return /\blong[\s-]*running\b|\b(?:ongoing|deep)\s+(?:research|investigation)\b|\bstart\s+(?:a\s+)?(?:research|investigation)\b|\bresearch\s+(?:this|that)\b/i.test(
     text,
@@ -385,6 +391,19 @@ export class Commands {
     }
     if (sub === "help") {
       await reply(help);
+      return;
+    }
+    if (sub === "tsundere") {
+      if (i.guildId !== this.cfg.discordGuildId) {
+        await reply("Use this command in the configured Discord server.");
+        return;
+      }
+      const enabled = toggleTsundere(this.store.db, i.guildId);
+      await reply(
+        enabled
+          ? "Tsundere mode is ON for this server. I-it's not like I wanted to help you or anything, nya~ New answers will use this voice."
+          : "Tsundere mode is OFF for this server. New answers will use my normal voice.",
+      );
       return;
     }
     if (sub === "sync") {

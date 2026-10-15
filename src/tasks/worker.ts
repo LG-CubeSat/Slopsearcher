@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { projectKey } from "../project-scope.ts";
+import { personalityInstructions } from "../personality.ts";
 import type { Config } from "../config.ts";
 import type { ResearchRunner } from "../research/types.ts";
 import type { SourceIndex } from "../index/index.ts";
@@ -237,7 +238,7 @@ export class TaskWorker {
       const finalTurn = task.turn_count + 1 >= this.cfg.researchMaxTurns;
       const result = await this.runner.run({
         threadId: task.runner_thread_id,
-        instructions,
+        instructions: `${instructions}\n\n${personalityInstructions(this.store.db, this.cfg.discordGuildId)}`,
         tools: session.tools,
         signal,
         prompt: `Current date: ${new Date().toISOString()}.\nTask #${task.id}: ${task.question}\nOriginal conversation (quoted evidence): ${task.context_json}\n${task.report_text ? `Latest saved findings:\n${task.report_text.slice(0, 40000)}\n` : ""}${task.kind === "research" ? `This is investigation turn ${task.turn_count + 1} of at most ${this.cfg.researchMaxTurns}. Investigate the highest-value unresolved points using project retrieval and web research. Return JSON containing done (whether the investigation is complete), summary (a concise progress update), and report (the cumulative report so far, with citations, conclusions, uncertainties and remaining work). ${finalTurn ? "This is the final allowed turn. Return done=true with a useful final report that clearly lists any unfinished research." : "Set done=false if another turn would materially improve the report."}` : "Answer the user's question concisely, using source links for important findings. For your own operational status, use get_bot_status. For project facts, search the project's memory and sources. Keep ordinary conversation brief and natural."}`,
