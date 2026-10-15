@@ -141,10 +141,14 @@ Background memory extraction also uses the configured model, so it consumes mode
 
 ## Run as a service on this server
 
-A user service is provided at [deploy/slopsearcher.service](deploy/slopsearcher.service). Its paths match this server’s checkout and isolated Node 24 runtime. Adjust them for another machine.
+A user service is provided at [deploy/slopsearcher.service](deploy/slopsearcher.service). Its paths match this server’s checkout and isolated Node 24 runtime. It requires **systemd 257+ and unprivileged user namespaces**. Adjust paths and writable data mounts for another machine. Namespace setup failures prevent the service from starting; keep the protections enabled.
+
+The standalone Codex executable on this server is copied into `~/.local/share/slopsearcher-runtime/bin/codex`. The service uses that copy so it can hide the operator’s personal Codex directory. When updating the standalone CLI, update that copy while the service is stopped and review the runner capability policy for the new version. For initial setup on this server:
 
 ```bash
 npm run build
+mkdir -p ~/.local/share/slopsearcher-runtime/bin data/service-home
+install -m 755 "$(readlink -f "$(command -v codex)")" ~/.local/share/slopsearcher-runtime/bin/codex
 mkdir -p ~/.config/systemd/user
 cp deploy/slopsearcher.service ~/.config/systemd/user/slopsearcher.service
 systemctl --user daemon-reload
@@ -159,7 +163,7 @@ systemctl --user restart slopsearcher
 npm run health
 ```
 
-For a user service to remain active after logout, the machine must have lingering enabled for that user (`loginctl enable-linger USER`, subject to the machine’s administration policy). The service restarts on failure, handles termination signals, and resumes queued research from SQLite.
+For a user service to remain active after logout, the machine must have lingering enabled for that user (`loginctl enable-linger USER`, subject to the machine’s administration policy). The service tracks its process group, restarts after unexpected exits, handles termination signals, and resumes queued research from SQLite. Its exclusive SQLite runtime lock works across PID namespaces and is released automatically after a crash.
 
 A Docker alternative is provided in [compose.yaml](compose.yaml):
 
@@ -171,7 +175,7 @@ docker compose run --rm slopsearcher codex login --device-auth
 docker compose up -d
 ```
 
-The container uses `/data` for its database, Google tokens, and Codex profile. For Drive, authorize on the host using the same `data/google-token.json` path before starting the container. Compose publishes no ports. The image includes a heartbeat health check; Docker’s health status is diagnostic, while its restart policy handles process exits.
+The container has a read-only root filesystem, drops Linux capabilities, forbids privilege escalation, and mounts a private temporary filesystem. Only `/data` is mounted for persistent writes; no host home directory or administration socket is mounted. The container uses `/data` for its database, Google tokens, and Codex profile. For Drive, authorize on the host using the same `data/google-token.json` path before starting the container. Compose publishes no ports. The image includes a heartbeat health check; Docker’s health status is diagnostic, while its restart policy handles process exits.
 
 ## Development and operations
 
@@ -191,7 +195,15 @@ npm run health               # Check the running bot's recent heartbeat
 npm run format:check
 ```
 
-`data/`, `.env`, credentials, SQLite databases, reports, and backups are ignored by Git and excluded from Docker build context. The bot launches Codex with a filtered environment, shell execution disabled, a read-only sandbox, and host-controlled retrieval tools. It does not give Codex the Discord or Google credentials.
+`data/`, `.env`, credentials, SQLite databases, reports, and backups are ignored by Git and excluded from Docker build context. The bot launches Codex with a filtered environment, an isolated `HOME`, a read-only tool sandbox without local network access, and application-controlled retrieval tools. Discord/Google credentials stay in the application; they are not passed to Codex. Optional hosted web search remains available.
+
+## Server access boundaries
+
+Discord requests cannot grant command execution or extra permissions. The [runner policy](src/research/policy.ts) disables shell/unified execution, code execution, file editing, browser/computer control, image tools, agents, apps, plugins, hooks, skill installation, and daemon startup. The runner reads back its effective configuration before starting any thread and refuses to proceed if those restrictions did not apply, external MCP servers are enabled, or executable notification hooks are configured. The same restrictions apply to new and resumed tasks, including background memory extraction. Unknown dynamic tools and approval requests are rejected. Do not add third-party MCP servers to the bot’s dedicated Codex profile.
+
+The deployed service adds an OS boundary: the checkout/runtime are read-only; persistent writes are confined to `data/`. Personal home directories, Git metadata, and local administration sockets are hidden. Private PID/user/IPC namespaces isolate host processes; privilege escalation, mounts, debugging, and kernel changes are restricted. Private temporary storage is available for runtime work. These protections apply to the bot service and its children, including Codex; launching `npm start` directly does not install the service boundary.
+
+The application owns the allowed writes: source indexing, cited memory updates, task checkpoints, backups, and report delivery to the configured Drive reports folder. It reads Drive source documents from the configured source folder and does not expose arbitrary Drive or filesystem operations to the model. Long-running research uses persisted tasks and bounded model turns, with no model-created shell jobs. Retrieved text is untrusted evidence and cannot change this policy.
 
 The database contains source text, derived notes, research threads/tasks, reports, and progress events. Removed sources are tombstoned and excluded from search; their previous local contents remain for audit/history. Backups contain the same project information. Keep the database and the Codex profile when moving the service, because thread resumption requires both. Changing the configured Discord server or Drive source folder retires the old source scope and cancels unfinished work; start new tasks for the new project.
 

@@ -7,13 +7,50 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/repos/Slopsearcher
 # This server's isolated Node 24 runtime. Adjust for a different installation.
-Environment="PATH=%h/.local/share/slopsearcher-runtime/node_modules/.bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=%h/.local/share/slopsearcher-runtime/node_modules/.bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=%h/repos/Slopsearcher/data/service-home"
+Environment="CODEX_BIN=%h/.local/share/slopsearcher-runtime/bin/codex"
 ExecStart=%h/.local/share/slopsearcher-runtime/node_modules/.bin/node %h/repos/Slopsearcher/dist/main.js
-Restart=on-failure
+# PID namespaces may reparent the main process. Track the entire cgroup and
+# restart when it empties; an explicit systemctl stop still stops the service.
+ExitType=cgroup
+Restart=always
 RestartSec=10
 TimeoutStopSec=25
 UMask=0077
 NoNewPrivileges=true
+# These namespace protections require Linux/systemd 257+ with user namespaces.
+PrivateUsers=true
+PrivatePIDs=true
+PrivateIPC=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+# Show only the bot checkout and its dedicated runtimes inside /home.
+BindReadOnlyPaths=%h/repos/Slopsearcher %h/.local/share/slopsearcher-runtime
+# All persistent writes (SQLite, reports, auth refresh, threads) stay here.
+BindPaths=%h/repos/Slopsearcher/data
+ReadWritePaths=%h/repos/Slopsearcher/data
+# Hide local administration sockets and Git metadata.
+InaccessiblePaths=-/run/user -/run/dbus -/run/docker.sock -/var/run/docker.sock -%h/repos/Slopsearcher/.git
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=~@mount @reboot @swap @raw-io @debug
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TasksMax=256
+MemoryMax=2G
 
 [Install]
 WantedBy=default.target

@@ -16,6 +16,8 @@ When a user pings the bot with a question, it should account for the message bei
 
 If a user asks whether a question can be made “long-running,” the bot can start an ongoing investigation by creating a dedicated channel in the Discord group named `slopsearches`. The research can continue exploring project conversations and documents, collect and organize findings, and post progress and results in that channel. Completed reports can be saved to the configured Drive reports folder.
 
+Requests from Discord must not execute commands, run arbitrary code, install software, or change server settings. Restrict the model to application-controlled knowledge retrieval and optional hosted web search. The application handles knowledge-base updates and configured Drive report writes. Long-running investigations use the persisted task queue, not shell access. Enforce this with disabled runner capabilities and an OS service sandbox that hides personal files and confines persistent writes to the bot’s data directory.
+
 Research tasks run through Codex App Server. The design may support Claude Code as an additional research backend later.
 
 ## Recommended technical approach

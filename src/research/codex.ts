@@ -1,4 +1,10 @@
 import { mkdirSync } from "node:fs";
+import {
+  runnerConfig,
+  runnerConfigArgs,
+  assertRunnerConfig,
+  runnerBoundary,
+} from "./policy.ts";
 import { join, dirname } from "node:path";
 import type { Config } from "../config.ts";
 import { RpcClient, type RpcMessage } from "./rpc.ts";
@@ -30,10 +36,13 @@ export class CodexRunner implements ResearchRunner {
     const cwd = join(dirname(this.cfg.dbPath), "research-workspace");
     mkdirSync(cwd, { recursive: true, mode: 0o700 });
     mkdirSync(this.cfg.codexHome, { recursive: true, mode: 0o700 });
+    const home = join(this.cfg.codexHome, "runtime-home");
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    // Dedicated HOME prevents discovery of the operator's Git/SSH/agent settings.
     // Do not give the child Discord, Google, or Git credentials from .env.
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      HOME: process.env.HOME,
+      HOME: home,
       CODEX_HOME: this.cfg.codexHome,
     };
     for (const name of [
@@ -53,14 +62,7 @@ export class CodexRunner implements ResearchRunner {
         "app-server",
         "--listen",
         "stdio://",
-        "-c",
-        "features.shell_tool=false",
-        "-c",
-        "features.apply_patch_freeform=false",
-        "-c",
-        "features.multi_agent=false",
-        "-c",
-        "features.code_mode=false",
+        ...runnerConfigArgs(),
         "-c",
         `web_search=${webSearch ? '"live"' : '"disabled"'}`,
       ],
@@ -116,6 +118,10 @@ export class CodexRunner implements ResearchRunner {
       capabilities: { experimentalApi: true },
     });
     client.send({ method: "initialized", params: {} });
+    const effective = await client.request("config/read", {
+      includeLayers: false,
+    });
+    assertRunnerConfig(effective.config);
   }
   async run(request: RunRequest): Promise<{ threadId: string; text: string }> {
     if (request.signal?.aborted) throw new Error("Task cancelled");
@@ -136,13 +142,9 @@ export class CodexRunner implements ResearchRunner {
         ...(this.cfg.codexModel ? { model: this.cfg.codexModel } : {}),
         approvalPolicy: "never",
         sandbox: "read-only",
-        developerInstructions: request.instructions,
-        config: {
-          "features.shell_tool": false,
-          "features.apply_patch_freeform": false,
-          "features.multi_agent": false,
-          "features.code_mode": false,
-        },
+        developerInstructions: `${runnerBoundary}\n\n${request.instructions}`,
+        cwd: join(dirname(this.cfg.dbPath), "research-workspace"),
+        config: runnerConfig,
       };
       const thread = request.threadId
         ? await client.request("thread/resume", {

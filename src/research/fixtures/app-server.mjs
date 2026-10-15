@@ -2,6 +2,23 @@
 import { createInterface } from "node:readline";
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 let current;
+const config = {};
+for (let i = 2; i < process.argv.length; i++) {
+  if (process.argv[i] !== "-c") continue;
+  const setting = process.argv[++i];
+  const equals = setting.indexOf("=");
+  const key = setting.slice(0, equals);
+  const raw = setting.slice(equals + 1);
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    continue;
+  }
+  if (key.startsWith("features."))
+    (config.features ??= {})[key.slice(9)] = value;
+  else config[key] = value;
+}
 const complete = (text, status = "completed") => {
   send({
     method: "item/completed",
@@ -42,6 +59,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     if (!m.params.capabilities.experimentalApi)
       throw Error("experimental API required");
     send({ id: m.id, result: {} });
+  } else if (m.method === "config/read") {
+    send({ id: m.id, result: { config } });
   } else if (m.method === "thread/start" || m.method === "thread/resume") {
     if (m.params.model !== "gpt-6-luna") throw Error("wrong model");
     if (m.params.approvalPolicy !== "never" || m.params.sandbox !== "read-only")
