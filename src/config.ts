@@ -53,7 +53,7 @@ const schema = z.object({
   researchMaxTurns: int(1, 50, 6),
   researchConcurrency: int(1, 8, 2),
   maxPendingTasks: int(1, 1000, 50),
-  userCooldownSeconds: int(0, 3600, 20),
+  userCooldownSeconds: int(0, 3600, 0),
   backfillPageSize: int(1, 100, 100),
   backfillConcurrency: int(1, 16, 2),
   syncIntervalSeconds: int(30, 86400, 300),

@@ -150,7 +150,7 @@ All settings are documented in [.env.example](.env.example). Defaults:
 | Research turn budget                     | 6 turns per investigation                        |
 | Per-turn timeout                         | 30 minutes                                       |
 | Maximum queued/running tasks             | 50                                               |
-| Per-user request cooldown                | 20 seconds                                       |
+| Per-user request cooldown                | Disabled (`USER_COOLDOWN_SECONDS=0`)              |
 | SQLite backup                            | Daily; retain the latest 7                       |
 
 Research uses additional turns when the agent identifies useful remaining work. The last allowed turn must produce a report that lists unfinished work. A transient failure is retried three times with backoff. Cancellation interrupts the active runner. Tasks waiting for sign-in do not spend their retry budget.
