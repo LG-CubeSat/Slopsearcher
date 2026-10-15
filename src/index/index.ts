@@ -39,8 +39,8 @@ export class SourceIndex {
   upsertMany(inputs: readonly SourceInput[]): UpsertResult {
     const selectExisting = this.#db.prepare<
       [string, string],
-      { id: number; content_hash: string }
-    >("SELECT id, content_hash FROM sources WHERE kind = ? AND external_id = ?");
+      { id: number; content_hash: string; deleted_at: number | null }
+    >("SELECT id, content_hash, deleted_at FROM sources WHERE kind = ? AND external_id = ?");
 
     const insert = this.#db.prepare(
       `INSERT INTO sources
@@ -52,7 +52,7 @@ export class SourceIndex {
     const update = this.#db.prepare(
       `UPDATE sources
           SET url = ?, channel_id = ?, channel_name = ?, author = ?, parent_id = ?,
-              title = ?, ts = ?, text = ?, content_hash = ?, fetched_at = ?
+              title = ?, ts = ?, text = ?, content_hash = ?, fetched_at = ?, deleted_at = NULL, extracted_hash = NULL
         WHERE id = ?`,
     );
 
@@ -63,7 +63,7 @@ export class SourceIndex {
     // taking minutes and taking hours.
     this.#db.transaction(() => {
       for (const input of inputs) {
-        const hash = contentHash(input.text);
+        const hash = contentHash(JSON.stringify([contentHash(input.text), input.title ?? null, input.url, input.channelId ?? null, input.channelName ?? null, input.author ?? null, input.parentId ?? null, input.ts]));
         const now = Date.now();
         const existing = selectExisting.get(input.kind, input.externalId);
 
@@ -83,7 +83,7 @@ export class SourceIndex {
             now,
           );
           result.inserted += 1;
-        } else if (existing.content_hash !== hash) {
+        } else if (existing.content_hash !== hash || existing.deleted_at !== null) {
           update.run(
             input.url,
             input.channelId ?? null,
@@ -97,8 +97,10 @@ export class SourceIndex {
             now,
             existing.id,
           );
+          this.#db.prepare("UPDATE memories SET stale_at = COALESCE(stale_at, ?) WHERE id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?)").run(now, existing.id);
           result.updated += 1;
         } else {
+          this.#db.prepare("UPDATE sources SET fetched_at = ? WHERE id = ?").run(now, existing.id);
           result.unchanged += 1;
         }
       }
@@ -117,9 +119,15 @@ export class SourceIndex {
     if (match === null) return [];
 
     const limit = Math.min(Math.max(options.limit ?? 20, 1), 200);
-    const filters: string[] = [];
+    const filters: string[] = ["s.deleted_at IS NULL"];
     const params: unknown[] = [match];
 
+    if (options.allowedChannelIds) {
+      const ids = options.allowedChannelIds;
+      filters.push(`(s.kind = 'drive' ${options.includeDrive === false ? "AND 0" : ""} OR s.channel_id IN (${ids.map(() => "?").join(",") || "NULL"}))`);
+      params.push(...ids);
+    }
+    if (options.includeDrive === false) filters.push("s.kind != 'drive'");
     if (options.kind) {
       filters.push("s.kind = ?");
       params.push(options.kind);
@@ -158,7 +166,7 @@ export class SourceIndex {
   getById(id: number): SourceRow | null {
     return (
       this.#db
-        .prepare<[number], SourceRow>("SELECT * FROM sources WHERE id = ?")
+        .prepare<[number], SourceRow>("SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL")
         .get(id) ?? null
     );
   }
@@ -167,7 +175,7 @@ export class SourceIndex {
     return (
       this.#db
         .prepare<[string, string], SourceRow>(
-          "SELECT * FROM sources WHERE kind = ? AND external_id = ?",
+          "SELECT * FROM sources WHERE kind = ? AND external_id = ? AND deleted_at IS NULL",
         )
         .get(kind, externalId) ?? null
     );
@@ -191,7 +199,7 @@ export class SourceIndex {
     const before = this.#db
       .prepare<[string, number, number], SourceRow>(
         `SELECT * FROM sources
-          WHERE channel_id = ? AND ts < ?
+          WHERE deleted_at IS NULL AND channel_id = ? AND ts < ?
           ORDER BY ts DESC LIMIT ?`,
       )
       .all(anchor.channel_id, anchor.ts, span)
@@ -200,7 +208,7 @@ export class SourceIndex {
     const after = this.#db
       .prepare<[string, number, number], SourceRow>(
         `SELECT * FROM sources
-          WHERE channel_id = ? AND ts > ?
+          WHERE deleted_at IS NULL AND channel_id = ? AND ts > ?
           ORDER BY ts ASC LIMIT ?`,
       )
       .all(anchor.channel_id, anchor.ts, span);
@@ -224,13 +232,22 @@ export class SourceIndex {
     return chain;
   }
 
+  retire(kind: SourceRow["kind"], externalId: string): void {
+    this.#db.transaction(() => {
+      const row = this.getByExternalId(kind, externalId);
+      if (!row) return;
+      this.#db.prepare("UPDATE sources SET deleted_at = ? WHERE id = ?").run(Date.now(), row.id);
+      this.#db.prepare("UPDATE memories SET stale_at = COALESCE(stale_at, ?) WHERE id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?)").run(Date.now(), row.id);
+    })();
+  }
+
   stats(): { total: number; discord: number; drive: number } {
     const row = this.#db
       .prepare<[], { total: number; discord: number; drive: number }>(
         `SELECT COUNT(*) AS total,
-                SUM(kind = 'discord') AS discord,
-                SUM(kind = 'drive')   AS drive
-           FROM sources`,
+                COALESCE(SUM(kind = 'discord'), 0) AS discord,
+                COALESCE(SUM(kind = 'drive'), 0) AS drive
+           FROM sources WHERE deleted_at IS NULL`,
       )
       .get();
     return row ?? { total: 0, discord: 0, drive: 0 };

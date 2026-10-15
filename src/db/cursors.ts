@@ -1,6 +1,6 @@
 import type { Db } from "./index.ts";
 
-export type CursorScope = "discord" | "drive";
+export type CursorScope = "discord" | "drive" | "discord-history-v2" | "discord-backfill-before";
 
 export function getCursor(db: Db, scope: CursorScope, key: string): string | null {
   const row = db

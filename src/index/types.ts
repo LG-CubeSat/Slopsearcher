@@ -28,6 +28,8 @@ export interface SourceRow {
   text: string;
   content_hash: string;
   fetched_at: number;
+  deleted_at: number | null;
+  extracted_hash: string | null;
 }
 
 export interface SearchHit extends SourceRow {
@@ -40,6 +42,8 @@ export interface SearchOptions {
   limit?: number;
   kind?: SourceKind;
   channelId?: string;
+  allowedChannelIds?: string[];
+  includeDrive?: boolean;
   /** Epoch ms bounds, inclusive. */
   after?: number;
   before?: number;

@@ -1,121 +1,79 @@
-import {
-  ChannelType,
-  PermissionsBitField,
-  type Client,
-  type Guild,
-  type TextChannel,
-} from "discord.js";
-import type { Config } from "../config.ts";
+import { ChannelType, PermissionFlagsBits, type Client, type Guild, type GuildTextBasedChannel } from "discord.js";
+import { channelConfigured, type Config } from "../config.ts";
 import type { Db } from "../db/index.ts";
 import { getCursor, setCursor } from "../db/cursors.ts";
 import type { SourceIndex } from "../index/index.ts";
-import type { SourceInput } from "../index/types.ts";
 import { logger } from "../log.ts";
 import { mapConcurrent, type WorkQueue } from "../queue.ts";
 import { toSourceInput } from "./normalize.ts";
-
-const log = logger("backfill");
-
-/**
- * Which channels we are both configured for and actually allowed to read.
- * Silently skipping unreadable channels beats crashing a backfill half-way
- * through because one channel has restrictive permissions.
- */
-export function indexableChannels(guild: Guild, cfg: Config): TextChannel[] {
-  const wanted = new Set(cfg.discordChannelIds);
-  const me = guild.members.me;
-
-  return [...guild.channels.cache.values()].filter((channel): channel is TextChannel => {
-    if (channel.type !== ChannelType.GuildText) return false;
-    if (wanted.size > 0 && !wanted.has(channel.id)) return false;
-    if (!me) return false;
-
-    const perms = channel.permissionsFor(me);
-    return Boolean(
-      perms?.has(PermissionsBitField.Flags.ViewChannel) &&
-        perms.has(PermissionsBitField.Flags.ReadMessageHistory),
-    );
+import { walkHistory } from "./history.ts";
+const log = logger("discord-sync");
+export function indexableChannels(guild: Guild, cfg: Config): GuildTextBasedChannel[] {
+  return [...guild.channels.cache.values()].filter((c): c is GuildTextBasedChannel => {
+    if (!c.isTextBased() || c.type === ChannelType.GuildVoice || c.type === ChannelType.GuildStageVoice) return false;
+    if (!channelConfigured(cfg, c.id, c.parentId) || !guild.members.me) return false;
+    const p = c.permissionsFor(guild.members.me);
+    return Boolean(p?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]));
   });
 }
-
-/**
- * Walks a channel's history forward from the last indexed message.
- *
- * The cursor is advanced after every page, not at the end, so a crash or a
- * restart mid-backfill resumes where it stopped instead of restarting the
- * channel. Combined with the content-hash upsert, re-running is always safe.
- */
-async function backfillChannel(
-  channel: TextChannel,
-  guildId: string,
-  db: Db,
-  index: SourceIndex,
-  pageSize: number,
-): Promise<number> {
-  let after = getCursor(db, "discord", channel.id) ?? "0";
-  let indexed = 0;
-
-  for (;;) {
-    const page = await channel.messages.fetch({ limit: pageSize, after });
-    if (page.size === 0) break;
-
-    // `after` returns newest-first; index oldest-first so the cursor only ever
-    // moves forward and a partial page leaves a coherent prefix behind.
-    const ordered = [...page.values()].sort(
-      (a, b) => a.createdTimestamp - b.createdTimestamp,
-    );
-
-    const inputs = ordered
-      .map((message) => toSourceInput(message, guildId))
-      .filter((input): input is SourceInput => input !== null);
-
-    if (inputs.length > 0) {
-      const result = index.upsertMany(inputs);
-      indexed += result.inserted + result.updated;
+export async function syncChannel(channel: GuildTextBasedChannel, cfg: Config, db: Db, index: SourceIndex, queue: WorkQueue, full = false, stopped = () => false): Promise<void> {
+  const scope = "discord-history-v2";
+  const cursor = getCursor(db, scope, channel.id);
+  const cutoff = full ? undefined : cursor ?? undefined;
+  const partial = full ? undefined : getCursor(db, "discord-backfill-before", channel.id) ?? undefined;
+  const started = Date.now();
+  let newest: string | undefined;
+  let count = 0;
+  const complete = await walkHistory({
+    ...(partial ? { before: partial } : {}), ...(cutoff ? { stopAt: cutoff } : {}), stopped,
+    fetch: before => queue.submit(`history:${channel.id}`, "backfill", async () => {
+      const rows = await channel.messages.fetch({ limit: cfg.backfillPageSize, ...(before ? { before } : {}), cache: false });
+      return [...rows.values()];
+    }),
+    consume: async page => {
+      for (const m of page) {
+        if (!newest || BigInt(m.id) > BigInt(newest)) newest = m.id;
+        // Keep bot replies out of knowledge to avoid reinforcing generated claims.
+        if (m.author.bot) continue;
+        const source = toSourceInput(m, cfg.discordGuildId);
+        if (source) { index.upsert(source); count++; }
+      }
+    },
+    checkpoint: before => { if (!cursor && !full) setCursor(db, "discord-backfill-before", channel.id, before); },
+  });
+  if (complete) {
+    // After an interrupted initial scan, the last page's newest is older than
+    // the actual head. A catch-up scan starts from this conservative watermark.
+    if (newest && (!cursor || BigInt(newest) > BigInt(cursor))) setCursor(db, scope, channel.id, newest);
+    db.prepare("DELETE FROM cursors WHERE scope = 'discord-backfill-before' AND key = ?").run(channel.id);
+    if (full) {
+      const missing = db.prepare<[string, number], { external_id: string }>("SELECT external_id FROM sources WHERE kind = 'discord' AND channel_id = ? AND deleted_at IS NULL AND fetched_at < ?").all(channel.id, started);
+      for (const row of missing) index.retire("discord", row.external_id);
     }
-
-    const newest = ordered.at(-1);
-    if (!newest) break;
-    after = newest.id;
-    setCursor(db, "discord", channel.id, after);
-
-    log.debug(`#${channel.name}: +${page.size} (cursor ${after})`);
-    if (page.size < pageSize) break;
   }
-
-  if (indexed > 0) log.info(`#${channel.name}: indexed ${indexed} messages`);
-  return indexed;
+  if (count) log.info(`#${channel.name}: checked ${count} messages${full ? " (reconciliation)" : ""}`);
 }
-
-export async function runBackfill(
-  client: Client,
-  cfg: Config,
-  db: Db,
-  index: SourceIndex,
-  queue: WorkQueue,
-): Promise<number> {
+export async function runBackfill(client: Client, cfg: Config, db: Db, index: SourceIndex, queue: WorkQueue, full = false, stopped = () => false): Promise<void> {
   const guild = await client.guilds.fetch(cfg.discordGuildId);
   await guild.channels.fetch();
-
-  const channels = indexableChannels(guild, cfg);
-  log.info(`backfilling ${channels.length} channel(s)`);
-
-  const counts = await mapConcurrent(
-    channels,
-    cfg.backfillConcurrency,
-    (channel) =>
-      // Lowest priority: a long backfill must yield to live questions.
-      queue.submit(`backfill:#${channel.name}`, "backfill", () =>
-        backfillChannel(channel, guild.id, db, index, cfg.backfillPageSize).catch(
-          (error: unknown) => {
-            log.warn(`#${channel.name} backfill failed; will retry next run`, error);
-            return 0;
-          },
-        ),
-      ),
-  );
-
-  const total = counts.reduce((sum, count) => sum + count, 0);
-  log.info(`backfill complete: ${total} messages indexed`);
-  return total;
+  await guild.channels.fetchActiveThreads();
+  // Archive history matters too; paginate archived public threads per parent.
+  for (const c of guild.channels.cache.values()) {
+    if (!channelConfigured(cfg, c.id, c.parentId) || !("threads" in c) || !c.isTextBased()) continue;
+    try {
+      let before: Date | undefined;
+      for (;;) {
+        if (stopped()) return;
+        const page = await c.threads.fetchArchived({ type: "public", limit: 100, ...(before ? { before } : {}) }, true);
+        if (!page.hasMore || !page.threads.size) break;
+        const last = page.threads.last()?.archiveTimestamp;
+        if (!last || before?.getTime() === last) break;
+        before = new Date(last);
+      }
+    } catch (e) { log.warn(`Could not list archived threads in ${c.id}`, e); }
+  }
+  await mapConcurrent(indexableChannels(guild, cfg), cfg.backfillConcurrency, async c => {
+    try { await syncChannel(c, cfg, db, index, queue, full, stopped); }
+    catch (e) { log.warn(`Sync failed for #${c.name}; keeping its existing index until a successful pass`, e); }
+  });
 }

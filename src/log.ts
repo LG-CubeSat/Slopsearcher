@@ -13,7 +13,12 @@ function emit(level: Level, scope: string, msg: string, extra?: unknown): void {
   const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${scope}] ${msg}`;
   const stream = level === "error" || level === "warn" ? console.error : console.log;
   if (extra === undefined) stream(line);
-  else stream(line, extra);
+  else {
+    let detail = extra instanceof Error ? `${extra.name}: ${extra.message}` : typeof extra === "string" ? extra : JSON.stringify(extra);
+    detail = detail.replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, "Bearer [redacted]");
+    for (const [key, value] of Object.entries(process.env)) if (value && value.length > 8 && /TOKEN|SECRET|API_KEY/i.test(key)) detail = detail.replaceAll(value, "[redacted]");
+    stream(line, detail);
+  }
 }
 
 export function logger(scope: string) {
