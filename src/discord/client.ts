@@ -23,6 +23,7 @@ import { logger } from "../log.ts";
 import type { WorkQueue } from "../queue.ts";
 import { runBackfill } from "./backfill.ts";
 import { toSourceInput } from "./normalize.ts";
+import { resolveDiscordMember, recentMemberMessages } from "./members.ts";
 import { audienceCompatible } from "./access.ts";
 import type { Task } from "../tasks/store.ts";
 import { chunks, noMentions } from "../util.ts";
@@ -31,6 +32,7 @@ export interface AccessScope {
   channelIds: string[];
   destinationId: string;
   userId: string;
+  originId?: string;
 }
 export interface DiscordServiceOptions {
   cfg: Config;
@@ -325,7 +327,70 @@ export class DiscordService {
         ?.deny.has(PermissionFlagsBits.ViewChannel)
     )
       ids.push(originId);
-    return { channelIds: [...new Set(ids)], destinationId, userId };
+    return { channelIds: [...new Set(ids)], destinationId, userId, originId };
+  }
+  async resolveMember(query: string) {
+    return resolveDiscordMember(
+      this.client,
+      this.opts.cfg.discordGuildId,
+      query,
+    );
+  }
+  async memberMessages(
+    scope: AccessScope,
+    userId: string,
+    limit: number,
+    channelId?: string,
+  ) {
+    const current = await this.scope(
+      scope.userId,
+      scope.destinationId,
+      scope.originId ?? scope.destinationId,
+    );
+    const allowed = scope.channelIds.filter((id) =>
+      current.channelIds.includes(id),
+    );
+    if (channelId && !allowed.includes(channelId))
+      throw new Error("Channel not allowed");
+    return recentMemberMessages(
+      this.client,
+      this.opts.cfg.discordGuildId,
+      channelId ? [channelId] : allowed,
+      userId,
+      limit,
+      this.opts.index,
+      () => this.#stopping,
+    );
+  }
+  messageIdentity(message: Message) {
+    return {
+      originMessageId: message.id,
+      originChannelId: message.channelId,
+      requester: {
+        id: message.author.id,
+        username: message.author.username,
+        displayName:
+          message.member?.displayName ??
+          message.author.globalName ??
+          message.author.username,
+      },
+      mentionedUsers: [...message.mentions.users.values()].map((user) => ({
+        id: user.id,
+        username: user.username,
+        globalName: user.globalName,
+        displayName:
+          message.mentions.members?.get(user.id)?.displayName ??
+          user.globalName ??
+          user.username,
+        bot: user.bot,
+      })),
+      mentionedChannels: [...message.mentions.channels.values()].map(
+        (channel) => ({
+          id: channel.id,
+          name: "name" in channel ? channel.name : null,
+        }),
+      ),
+    };
   }
   async refreshSource(source: SourceRow): Promise<void> {
     if (source.kind !== "discord" || !source.channel_id) return;
@@ -392,8 +457,10 @@ export class DiscordService {
       }
     }
     return {
+      ...this.messageIdentity(message),
       reply: reply
         ? {
+            authorId: reply.author.id,
             author: reply.author.username,
             bot: reply.author.bot,
             text: reply.content,
@@ -401,6 +468,7 @@ export class DiscordService {
           }
         : null,
       nearby: [...nearby.values()].reverse().map((m) => ({
+        authorId: m.author.id,
         author: m.author.username,
         bot: m.author.bot,
         text: m.content,

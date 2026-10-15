@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { discordUserId } from "../discord/members.ts";
 import type { SourceIndex } from "../index/index.ts";
 import type { SourceRow } from "../index/types.ts";
 import type { MemoryStore } from "../memory/store.ts";
@@ -44,6 +45,73 @@ export function projectTools(
     return source;
   };
   const tools: ToolDefinition[] = [
+    {
+      name: "resolve_discord_member",
+      description:
+        "Resolve a Discord user mention, numeric user ID, username or server nickname to verified user identities in the configured server. Mentioned user IDs are also supplied in conversation context. If multiple names match, ask the user which one; never infer identity from a nearby message author.",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      invoke: async (args) => {
+        const { query } = z
+          .object({ query: z.string().trim().min(1).max(100) })
+          .parse(args);
+        return discord.resolveMember(query);
+      },
+    },
+    {
+      name: "get_member_messages",
+      description:
+        "Find a specific Discord user's latest messages by their exact user ID, sorted newest first and verified live. Use this for 'what was @person's last message?' or recent messages by a member, not keyword search or nearby excerpts. Default limit=1. Searches all authorized project channels unless channelId is supplied. Report incomplete coverage honestly and include the returned source link, timestamp and channel.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          userId: { type: "string" },
+          limit: { type: "integer" },
+          channelId: { type: "string" },
+        },
+        required: ["userId"],
+        additionalProperties: false,
+      },
+      invoke: async (args) => {
+        const input = z
+          .object({
+            userId: z
+              .string()
+              .refine(
+                (value) => discordUserId(value) !== null,
+                "Supply a numeric user ID or user mention",
+              )
+              .transform((value) => discordUserId(value)!),
+            limit: z.number().int().min(1).max(20).default(1),
+            channelId: z
+              .string()
+              .regex(/^\d{17,20}$/)
+              .optional(),
+          })
+          .parse(args);
+        if (input.channelId && !allowed.has(input.channelId))
+          throw new Error("Channel not allowed");
+        const result = await discord.memberMessages(
+          scope,
+          input.userId,
+          input.limit,
+          input.channelId,
+        );
+        for (const message of result.messages) {
+          if (
+            !allowed.has(message.channelId) ||
+            message.authorId !== input.userId
+          )
+            throw new Error("Message result is outside the authorized scope");
+          usedChannels.add(message.channelId);
+        }
+        return result;
+      },
+    },
     {
       name: "get_bot_status",
       description:

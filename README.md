@@ -5,6 +5,7 @@ An experimental LG-CubeSat research assistant. Slopsearcher keeps project knowle
 ## What works
 
 - Mention the bot or use `/slop ask` for questions grounded in project history, with source links. The bot acknowledges immediately, edits that reply with its activity and elapsed time about every 15 seconds, then replaces it with the answer (including long answers as attachments). Both bot-user mentions and mentions of the bot’s managed Discord role work. Replies account for the referenced message and nearby conversation. Context retrieval has an eight-second limit so a slow history request cannot stall a question indefinitely.
+- Ask “what was @someone’s last message?” or ask for their recent messages. The bot resolves the user ID and searches authorized channels newest first, then verifies each result live.
 - Ask whether indexing has finished to get live synchronization status, rather than an answer inferred from old messages.
 - Use `/slop research`, or ask to make a question “long-running,” to create an investigation channel under `slopsearches`. Everyone in the configured Discord server can start research by default.
 - Research runs through Codex App Server, posts progress, saves checkpoints, and resumes persisted threads after a restart. The default is **GPT-6 Luna with max reasoning**.
@@ -84,6 +85,12 @@ Commands are registered in the configured server on startup without deleting unr
 A server manager can inspect and cancel tasks in the current project. To restrict who may start research, set `RESEARCH_EVERYONE=false` and configure `RESEARCH_ALLOWED_ROLE_IDS` and/or `RESEARCH_ALLOWED_USER_IDS`. Questions remain available to server members.
 
 Research channels copy the originating channel's permission overwrites. A task started inside a thread gets a channel private to the requester and bot (server administrators retain their usual access). Cross-channel retrieval checks the requester’s access and the destination audience; private channels with different access overwrites are deliberately excluded. Source access is checked again before delivering a report. Drive source-folder contents are treated as shared project knowledge for this server, so choose the source and report folders accordingly.
+
+## Questions about server members
+
+For example: `@Slop Searcher what was @8bitman’s last message?` Mention the actual member using Discord’s picker. The bot receives the mention’s user ID, username and display name; a read-only member lookup also supports IDs, usernames and server nicknames. Ambiguous names require clarification.
+
+Recent-message questions use [Discord’s author-filtered message search](https://docs.discord.com/developers/resources/message#search-guild-messages), sorted newest first. The application restricts the search to configured channels readable by the requester and the response audience, verifies returned authors by ID, and fetches the messages live before quoting them. Replies include the message link, channel and timestamp. Deleted search hits are skipped; incomplete search coverage is reported. The model has no raw Discord API or server-command access.
 
 ## Optional Google Drive integration
 

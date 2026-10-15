@@ -12,8 +12,12 @@ export const questionActivities = new Set([
   "Checking my indexing status…",
   "Checking web sources…",
   "Writing the answer…",
+  "Looking up the Discord member…",
+  "Finding their recent messages…",
 ]);
 export const toolActivity = new Map<string, string>([
+  ["resolve_discord_member", "Looking up the Discord member…"],
+  ["get_member_messages", "Finding their recent messages…"],
   ["search_project", "Searching project history…"],
   ["search_memory", "Searching project memory…"],
   ["open_source", "Reading project sources…"],

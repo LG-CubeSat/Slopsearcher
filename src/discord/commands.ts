@@ -178,7 +178,7 @@ export class Commands {
           "Could not load nearby discussion; continuing with the question",
           error,
         );
-        return { unavailable: true };
+        return { ...this.discord.messageIdentity(message), unavailable: true };
       });
       const task = this.store.create(
         {
