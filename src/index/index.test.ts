@@ -45,7 +45,10 @@ describe("upsert", () => {
   });
 
   it("is idempotent — re-ingesting identical content changes nothing", () => {
-    const batch = [message("1", "I2C between boards"), message("2", "LoRa downlink")];
+    const batch = [
+      message("1", "I2C between boards"),
+      message("2", "LoRa downlink"),
+    ];
     index.upsertMany(batch);
 
     const again = index.upsertMany(batch);
@@ -61,7 +64,9 @@ describe("upsert", () => {
 
   it("updates when the text actually changes, and search follows", () => {
     index.upsertMany([message("1", "the radio is an RFM95")]);
-    const edited = index.upsertMany([message("1", "the radio is an E22 LoRa module")]);
+    const edited = index.upsertMany([
+      message("1", "the radio is an E22 LoRa module"),
+    ]);
 
     expect(edited).toEqual({ inserted: 0, updated: 1, unchanged: 0 });
     expect(index.search("RFM95")).toHaveLength(0);
@@ -72,7 +77,10 @@ describe("upsert", () => {
 describe("search", () => {
   beforeEach(() => {
     index.upsertMany([
-      message("1", "the thermals board uses two TMP117 sensors at 0x48 and 0x49"),
+      message(
+        "1",
+        "the thermals board uses two TMP117 sensors at 0x48 and 0x49",
+      ),
       message("2", "ADCS is an STM32G431C8 with embedded magnetorquers"),
       message("3", "we decided on I2C for inter-board communication"),
       {
@@ -98,10 +106,16 @@ describe("search", () => {
 
   it("survives punctuation that is FTS5 query syntax", () => {
     // Each of these would be a syntax error if passed through unescaped.
-    for (const query of ["what's the I2C bus (rev 2)?", 'a "quoted" thing', "NEAR^*:"]) {
+    for (const query of [
+      "what's the I2C bus (rev 2)?",
+      'a "quoted" thing',
+      "NEAR^*:",
+    ]) {
       expect(() => index.search(query)).not.toThrow();
     }
-    expect(index.search("what's the I2C bus (rev 2)?").length).toBeGreaterThan(0);
+    expect(index.search("what's the I2C bus (rev 2)?").length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("returns nothing for a query with no usable terms", () => {

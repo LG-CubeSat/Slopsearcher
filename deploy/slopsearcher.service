@@ -1,0 +1,19 @@
+[Unit]
+Description=Slopsearcher Discord research bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/repos/Slopsearcher
+# This server's isolated Node 24 runtime. Adjust for a different installation.
+Environment="PATH=%h/.local/share/slopsearcher-runtime/node_modules/.bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=%h/.local/share/slopsearcher-runtime/node_modules/.bin/node %h/repos/Slopsearcher/dist/main.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=25
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

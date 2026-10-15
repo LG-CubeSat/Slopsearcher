@@ -1,6 +1,6 @@
 {
   "name": "slopsearcher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "start": "node dist/main.js",
     "dev": "tsx src/main.ts",
     "migrate": "tsx src/db/migrate-cli.ts",
@@ -16,7 +16,10 @@
     "doctor": "tsx src/cli/doctor.ts",
     "drive:auth": "tsx src/cli/drive-auth.ts",
     "backup": "tsx src/cli/backup.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "health": "node dist/cli/health.js",
+    "format": "prettier --write src scripts *.json *.md *.yaml .github/workflows/*.yml",
+    "format:check": "prettier --check src scripts *.json *.md *.yaml .github/workflows/*.yml"
   },
   "dependencies": {
     "@googleapis/drive": "^26.0.2",
@@ -33,6 +36,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.0.0",
+    "prettier": "^3.9.10",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",
     "vitest": "^5.0.4"

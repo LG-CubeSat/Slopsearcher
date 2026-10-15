@@ -14,9 +14,17 @@ describe("WorkQueue", () => {
       order.push("blocker");
     });
 
-    queue.submit("backfill", "backfill", async () => void order.push("backfill"));
+    queue.submit(
+      "backfill",
+      "backfill",
+      async () => void order.push("backfill"),
+    );
     queue.submit("extract", "extract", async () => void order.push("extract"));
-    queue.submit("mention", "interactive", async () => void order.push("mention"));
+    queue.submit(
+      "mention",
+      "interactive",
+      async () => void order.push("mention"),
+    );
 
     await blocker;
     await queue.drain();
@@ -81,9 +89,9 @@ describe("WorkQueue", () => {
 
     await queue.close();
     expect(done).toEqual([1]);
-    await expect(queue.submit("late", "interactive", async () => 1)).rejects.toThrow(
-      /closed/,
-    );
+    await expect(
+      queue.submit("late", "interactive", async () => 1),
+    ).rejects.toThrow(/closed/);
   });
 
   it("rejects the caller without stalling the queue", async () => {
@@ -93,7 +101,9 @@ describe("WorkQueue", () => {
     });
 
     await expect(failed).rejects.toThrow("boom");
-    await expect(queue.submit("ok", "extract", async () => 42)).resolves.toBe(42);
+    await expect(queue.submit("ok", "extract", async () => 42)).resolves.toBe(
+      42,
+    );
   });
 });
 

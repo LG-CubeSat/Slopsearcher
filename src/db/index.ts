@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { readdirSync, readFileSync, mkdirSync } from "node:fs";
+import { readdirSync, readFileSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "../log.ts";
@@ -7,7 +7,10 @@ import { logger } from "../log.ts";
 export type Db = Database.Database;
 
 const log = logger("db");
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "migrations");
+const MIGRATIONS_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "migrations",
+);
 
 /**
  * Opens the database with the pragmas the rest of the service assumes:
@@ -15,9 +18,11 @@ const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "migrations
  * memory -> source citation link cannot dangle.
  */
 export function openDb(path: string): Db {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  if (path !== ":memory:")
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 
   const db = new Database(path);
+  if (path !== ":memory:") chmodSync(path, 0o600);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");

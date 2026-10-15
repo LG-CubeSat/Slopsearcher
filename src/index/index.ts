@@ -40,7 +40,9 @@ export class SourceIndex {
     const selectExisting = this.#db.prepare<
       [string, string],
       { id: number; content_hash: string; deleted_at: number | null }
-    >("SELECT id, content_hash, deleted_at FROM sources WHERE kind = ? AND external_id = ?");
+    >(
+      "SELECT id, content_hash, deleted_at FROM sources WHERE kind = ? AND external_id = ?",
+    );
 
     const insert = this.#db.prepare(
       `INSERT INTO sources
@@ -63,7 +65,18 @@ export class SourceIndex {
     // taking minutes and taking hours.
     this.#db.transaction(() => {
       for (const input of inputs) {
-        const hash = contentHash(JSON.stringify([contentHash(input.text), input.title ?? null, input.url, input.channelId ?? null, input.channelName ?? null, input.author ?? null, input.parentId ?? null, input.ts]));
+        const hash = contentHash(
+          JSON.stringify([
+            contentHash(input.text),
+            input.title ?? null,
+            input.url,
+            input.channelId ?? null,
+            input.channelName ?? null,
+            input.author ?? null,
+            input.parentId ?? null,
+            input.ts,
+          ]),
+        );
         const now = Date.now();
         const existing = selectExisting.get(input.kind, input.externalId);
 
@@ -83,7 +96,10 @@ export class SourceIndex {
             now,
           );
           result.inserted += 1;
-        } else if (existing.content_hash !== hash || existing.deleted_at !== null) {
+        } else if (
+          existing.content_hash !== hash ||
+          existing.deleted_at !== null
+        ) {
           update.run(
             input.url,
             input.channelId ?? null,
@@ -97,10 +113,16 @@ export class SourceIndex {
             now,
             existing.id,
           );
-          this.#db.prepare("UPDATE memories SET stale_at = COALESCE(stale_at, ?) WHERE id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?)").run(now, existing.id);
+          this.#db
+            .prepare(
+              "UPDATE memories SET stale_at = COALESCE(stale_at, ?) WHERE id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?)",
+            )
+            .run(now, existing.id);
           result.updated += 1;
         } else {
-          this.#db.prepare("UPDATE sources SET fetched_at = ? WHERE id = ?").run(now, existing.id);
+          this.#db
+            .prepare("UPDATE sources SET fetched_at = ? WHERE id = ?")
+            .run(now, existing.id);
           result.unchanged += 1;
         }
       }
@@ -124,7 +146,9 @@ export class SourceIndex {
 
     if (options.allowedChannelIds) {
       const ids = options.allowedChannelIds;
-      filters.push(`(s.kind = 'drive' ${options.includeDrive === false ? "AND 0" : ""} OR s.channel_id IN (${ids.map(() => "?").join(",") || "NULL"}))`);
+      filters.push(
+        `(s.kind = 'drive' ${options.includeDrive === false ? "AND 0" : ""} OR s.channel_id IN (${ids.map(() => "?").join(",") || "NULL"}))`,
+      );
       params.push(...ids);
     }
     if (options.includeDrive === false) filters.push("s.kind != 'drive'");
@@ -166,12 +190,17 @@ export class SourceIndex {
   getById(id: number): SourceRow | null {
     return (
       this.#db
-        .prepare<[number], SourceRow>("SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL")
+        .prepare<[number], SourceRow>(
+          "SELECT * FROM sources WHERE id = ? AND deleted_at IS NULL",
+        )
         .get(id) ?? null
     );
   }
 
-  getByExternalId(kind: SourceRow["kind"], externalId: string): SourceRow | null {
+  getByExternalId(
+    kind: SourceRow["kind"],
+    externalId: string,
+  ): SourceRow | null {
     return (
       this.#db
         .prepare<[string, string], SourceRow>(
@@ -236,8 +265,14 @@ export class SourceIndex {
     this.#db.transaction(() => {
       const row = this.getByExternalId(kind, externalId);
       if (!row) return;
-      this.#db.prepare("UPDATE sources SET deleted_at = ? WHERE id = ?").run(Date.now(), row.id);
-      this.#db.prepare("UPDATE memories SET stale_at = COALESCE(stale_at, ?) WHERE id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?)").run(Date.now(), row.id);
+      this.#db
+        .prepare("UPDATE sources SET deleted_at = ? WHERE id = ?")
+        .run(Date.now(), row.id);
+      this.#db
+        .prepare(
+          "UPDATE memories SET stale_at = COALESCE(stale_at, ?) WHERE id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?)",
+        )
+        .run(Date.now(), row.id);
     })();
   }
 

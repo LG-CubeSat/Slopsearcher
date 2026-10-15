@@ -1,8 +1,13 @@
 import type { Db } from "./index.ts";
 
-export type CursorScope = "discord" | "drive" | "discord-history-v2" | "discord-backfill-before";
+export type CursorScope =
+  "discord" | "drive" | "discord-history-v2" | "discord-backfill-before";
 
-export function getCursor(db: Db, scope: CursorScope, key: string): string | null {
+export function getCursor(
+  db: Db,
+  scope: CursorScope,
+  key: string,
+): string | null {
   const row = db
     .prepare<[string, string], { value: string }>(
       "SELECT value FROM cursors WHERE scope = ? AND key = ?",

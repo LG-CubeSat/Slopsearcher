@@ -28,12 +28,8 @@ interface Job {
 
 const log = logger("queue");
 
-/**
- * A single in-process scheduler for every unit of work that costs money or
- * rate limit. Everything funnels through here so that concurrency is bounded
- * globally rather than per-module, and so priority is actually respected
- * instead of being a comment on a Promise.all.
- */
+/** Bounded priority queue for source I/O. Research workers have a separate
+ * concurrency limit so large history scans do not occupy their execution slots. */
 export class WorkQueue {
   readonly #pending: Job[] = [];
   readonly #concurrency: number;
@@ -143,14 +139,17 @@ export async function mapConcurrent<T, R>(
   const results = new Array<R>(items.length);
   let cursor = 0;
 
-  const runners = Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      const item = items[index];
-      if (item === undefined) continue;
-      results[index] = await worker(item, index);
-    }
-  });
+  const runners = Array.from(
+    { length: Math.min(Math.max(limit, 1), items.length) },
+    async () => {
+      while (cursor < items.length) {
+        const index = cursor++;
+        const item = items[index];
+        if (item === undefined) continue;
+        results[index] = await worker(item, index);
+      }
+    },
+  );
 
   await Promise.all(runners);
   return results;

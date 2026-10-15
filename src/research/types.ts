@@ -15,4 +15,7 @@ export interface RunRequest {
   onThread?: (id: string) => void;
   onProgress?: (text: string) => void;
 }
-export interface ResearchRunner { run(request: RunRequest): Promise<{ threadId: string; text: string }>; }
+export interface ResearchRunner {
+  isReady?: () => Promise<boolean>;
+  run(request: RunRequest): Promise<{ threadId: string; text: string }>;
+}
